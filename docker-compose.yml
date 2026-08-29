@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: agentplatform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes: [ postgres_data:/var/lib/postgresql/data ]
+    ports: [ "127.0.0.1:5432:5432" ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agentplatform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot: applies migrations (idempotent) before the app starts.
+  migrator:
+    build:
+      context: .
+      target: migrator
+    command: pnpm --filter @agentlathe/db migrate
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres/agentplatform
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: on-failure
+
+  app:
+    build:
+      context: .
+      target: runner
+    # .env is forwarded wholesale so operator-defined AGENTLATHE_SECRET_* references
+    # resolve inside the container; explicit `environment` entries take precedence.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres/agentplatform
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY:?PROVIDER_API_KEY is required, set it in .env}
+      PROVIDER_BASE_URL: ${PROVIDER_BASE_URL:-https://openrouter.ai/api/v1}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
+    ports: [ "127.0.0.1:3000:3000" ]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

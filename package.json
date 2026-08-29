@@ -1,0 +1,45 @@
+{
+  "name": "agentlathe",
+  "version": "0.1.0",
+  "description": "Self-hosted AI agent platform: build agents in a dashboard, call them through an OpenAI-compatible API or MCP, and review every run.",
+  "private": true,
+  "license": "MIT",
+  "author": "contedenis",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/contedenis/agentlathe.git"
+  },
+  "homepage": "https://github.com/contedenis/agentlathe#readme",
+  "bugs": "https://github.com/contedenis/agentlathe/issues",
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "openai-compatible",
+    "nextjs",
+    "drizzle",
+    "self-hosted",
+    "openrouter",
+    "ai-sdk"
+  ],
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run biome:check",
+    "format": "turbo run biome:format",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "test:integration": "turbo run test:integration",
+    "test:e2e": "turbo run test:e2e",
+    "biome:check": "biome check .",
+    "biome:format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.0",
+    "turbo": "^2.5.0"
+  }
+}

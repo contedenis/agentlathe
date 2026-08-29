@@ -1,0 +1,26 @@
+# Never send host-installed deps/build output into the Docker build context —
+# they're Windows/host binaries (esbuild, etc.) and would poison the Linux
+# install done by the Dockerfile's `deps` stage.
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/.turbo
+
+.git
+.gitignore
+
+# env files: real secrets never go into an image; compose injects them instead
+.env
+.env.*
+!.env.example
+
+# docs/tooling not needed inside the image
+docs
+.claude
+.agents
+.vscode
+
+*.log
+coverage

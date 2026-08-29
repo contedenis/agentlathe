@@ -1,0 +1,33 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
+    },
+    "test": {},
+    "test:coverage": {
+      "outputs": ["coverage/**"]
+    },
+    "test:integration": {
+      "passThroughEnv": ["DATABASE_URL"]
+    },
+    "test:e2e": {
+      "cache": false,
+      "passThroughEnv": ["DATABASE_URL", "PROVIDER_API_KEY", "E2E_MODEL"]
+    },
+    "//#biome:check": {
+      "outputs": []
+    },
+    "//#biome:format": {
+      "cache": false
+    }
+  }
+}

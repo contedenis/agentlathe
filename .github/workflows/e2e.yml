@@ -1,0 +1,62 @@
+name: E2E
+
+# Real-model suites: they consume OpenRouter credits, so they run on demand.
+# To enable the nightly cron in a fork: uncomment `schedule` below and add the
+# PROVIDER_API_KEY secret (Settings > Secrets and variables > Actions).
+on:
+  # schedule:
+  #   - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      e2e_model:
+        description: "OpenRouter model slug to run the suites against"
+        required: false
+        default: "~deepseek/deepseek-v4-flash-latest"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    # Secrets are unreadable in a job-level `if:`, so it maps to an env var (readable in a
+    # step's `if:`): a fork without the secret skips the steps and still reports success.
+    env:
+      PROVIDER_API_KEY: ${{ secrets.PROVIDER_API_KEY }}
+    steps:
+      - name: Check for PROVIDER_API_KEY
+        if: env.PROVIDER_API_KEY == ''
+        run: |
+          echo "::notice::Skipping the E2E suite: the PROVIDER_API_KEY secret is not configured for this repository. Add it under Settings > Secrets and variables > Actions to enable this workflow."
+
+      - uses: actions/checkout@v4
+        if: env.PROVIDER_API_KEY != ''
+
+      - uses: pnpm/action-setup@v4
+        if: env.PROVIDER_API_KEY != ''
+
+      - uses: actions/setup-node@v4
+        if: env.PROVIDER_API_KEY != ''
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: env.PROVIDER_API_KEY != ''
+
+      - run: pnpm --filter web exec playwright install --with-deps chromium
+        if: env.PROVIDER_API_KEY != ''
+
+      - run: pnpm test:e2e
+        if: env.PROVIDER_API_KEY != ''
+        env:
+          E2E_MODEL: ${{ inputs.e2e_model || '~deepseek/deepseek-v4-flash-latest' }}
+          NEXT_TELEMETRY_DISABLED: "1"
+          TURBO_TELEMETRY_DISABLED: "1"
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && env.PROVIDER_API_KEY != ''
+        with:
+          name: playwright-traces
+          path: apps/web/test-results/
+          retention-days: 7
