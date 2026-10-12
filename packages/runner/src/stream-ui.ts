@@ -44,6 +44,7 @@ export async function streamAgentForUI(
     const inputDenials = deniedApprovalCalls(messages, toolKinds);
     const startedAt = Date.now();
     let streamError: unknown;
+    const toolErrors = new Set<unknown>();
     // The run row exists only after the turn ends, mid-stream: it cannot travel in a header.
     let resolveRunId: (id: string | null) => void = () => {};
     const runId = new Promise<string | null>((resolve) => {
@@ -85,9 +86,22 @@ export async function streamAgentForUI(
           resolveRunId(null);
         }
       },
+      experimental_transform: () =>
+        new TransformStream({
+          transform(part, controller) {
+            if (part.type === "tool-error") toolErrors.add(part.error);
+            else if (part.type === "tool-call" && part.invalid)
+              toolErrors.add(part.error);
+            controller.enqueue(part);
+          },
+        }),
       // Runs before onEnd, so a failed turn is never recorded as healthy. The SDK calls
       // this twice — real error, then masked text — so ??= keeps the one worth reviewing.
+      // Tool errors pass through here too; the loop recovers from them, so they keep
+      // their text and fail nothing.
       onError: (error) => {
+        if (toolErrors.has(error))
+          return error instanceof Error ? error.message : String(error);
         streamError ??= error;
         void cleanup();
         return "An error occurred.";
