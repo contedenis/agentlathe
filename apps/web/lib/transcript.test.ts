@@ -42,7 +42,22 @@ describe("toTranscriptMessages — one review shape for three transports", () =>
       "in",
     );
 
-    expect(message.parts).toBe(parts);
+    expect(message.parts).toEqual(parts);
+  });
+
+  it("drops parts that are not objects, so a corrupt row cannot crash the run page", () => {
+    const [message] = toTranscriptMessages(
+      [
+        {
+          id: "u1",
+          role: "user",
+          parts: [null, "x", { type: "text", text: "ok" }],
+        },
+      ],
+      "in",
+    );
+
+    expect(message.parts).toEqual([{ type: "text", text: "ok" }]);
   });
 
   it("pairs a tool call with its result from the separate tool message", () => {
@@ -111,5 +126,146 @@ describe("toTranscriptMessages — one review shape for three transports", () =>
     );
 
     expect(messages).toEqual([]);
+  });
+
+  it("unwraps ModelMessage tool results into the matching UI states", () => {
+    const [message] = toTranscriptMessages(
+      [
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", toolCallId: "ok", toolName: "a", input: {} },
+            { type: "tool-call", toolCallId: "no", toolName: "b", input: {} },
+            { type: "tool-call", toolCallId: "err", toolName: "c", input: {} },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "ok",
+              output: { type: "json", value: { hits: 3 } },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "no",
+              output: { type: "execution-denied", reason: "needs approval" },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "err",
+              output: { type: "error-text", value: "HTTP 500" },
+            },
+          ],
+        },
+      ],
+      "out",
+    );
+
+    expect(message.parts).toEqual([
+      {
+        type: "tool-a",
+        toolCallId: "ok",
+        input: {},
+        state: "output-available",
+        output: { hits: 3 },
+      },
+      {
+        type: "tool-b",
+        toolCallId: "no",
+        input: {},
+        state: "output-denied",
+        approval: { id: "", approved: false, reason: "needs approval" },
+      },
+      {
+        type: "tool-c",
+        toolCallId: "err",
+        input: {},
+        state: "output-error",
+        errorText: "HTTP 500",
+      },
+    ]);
+  });
+});
+
+describe("toTranscriptMessages — OpenAI chat histories stored by /v1", () => {
+  const history = [
+    { role: "developer", content: "You are support." },
+    { role: "user", content: "where is order 7?" },
+    {
+      role: "assistant",
+      content: "Let me check.",
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "search_orders", arguments: '{"orderId":"7"}' },
+        },
+        {
+          id: "call_2",
+          type: "function",
+          function: { name: "client_location", arguments: "not json" },
+        },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_1", content: '{"status":"shipped"}' },
+    {
+      role: "tool",
+      tool_call_id: "call_2",
+      content: [{ type: "text", text: "Madrid" }],
+    },
+    { role: "assistant", content: "It shipped to Madrid." },
+    { role: "user", content: [{ type: "text", text: "thanks" }] },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_3",
+          type: "function",
+          function: { name: "close_ticket", arguments: "{}" },
+        },
+      ],
+    },
+  ];
+
+  it("turns tool_calls into tool parts paired with their tool messages, and developer into system", () => {
+    const messages = toTranscriptMessages(history, "in");
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(messages[2].parts).toEqual([
+      { type: "text", text: "Let me check." },
+      {
+        type: "tool-search_orders",
+        toolCallId: "call_1",
+        input: { orderId: "7" },
+        state: "output-available",
+        output: '{"status":"shipped"}',
+      },
+      {
+        type: "tool-client_location",
+        toolCallId: "call_2",
+        input: "not json",
+        state: "output-available",
+        output: "Madrid",
+      },
+    ]);
+    expect(messages[4].parts).toEqual([{ type: "text", text: "thanks" }]);
+    expect(messages[5].parts).toEqual([
+      {
+        type: "tool-close_ticket",
+        toolCallId: "call_3",
+        input: {},
+        state: "input-available",
+      },
+    ]);
   });
 });

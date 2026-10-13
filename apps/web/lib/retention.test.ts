@@ -20,6 +20,7 @@ const settings: AppSettings = {
   trackMcpRuns: false,
   agentRunTtlDays: 90,
   transcriptTtlDays: 14,
+  judgeModel: "typesafe/jev-1.13",
 };
 
 describe("scheduleRetentionSweep", () => {

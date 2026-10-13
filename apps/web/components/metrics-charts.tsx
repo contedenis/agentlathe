@@ -293,3 +293,111 @@ export function TokensChart({ data }: { data: TokenPoint[] }) {
     </ChartContainer>
   );
 }
+
+export type PassRatePoint = {
+  day: string;
+} & Record<string, number | string | null>;
+
+export type PassRateSeries = {
+  key: string;
+  criterionId: string;
+  question: string;
+};
+
+export type VersionMarker = { day: string; shortHash: string };
+
+const PASS_RATE_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+];
+
+const truncate = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+export function PassRateChart({
+  data,
+  series,
+  markers,
+}: {
+  data: PassRatePoint[];
+  series: PassRateSeries[];
+  markers: VersionMarker[];
+}) {
+  const config: ChartConfig = Object.fromEntries(
+    series.map((entry, index) => [
+      entry.key,
+      {
+        label: truncate(entry.question, 48),
+        color: PASS_RATE_COLORS[index % PASS_RATE_COLORS.length],
+      },
+    ]),
+  );
+
+  return (
+    <ChartContainer config={config} className="aspect-auto h-[220px] w-full">
+      <ComposedChart data={data} margin={{ left: 4, right: 4, top: 16 }}>
+        <CartesianGrid vertical={false} />
+        <XAxis
+          dataKey="day"
+          {...AXIS}
+          minTickGap={28}
+          tickFormatter={shortDay}
+        />
+        <YAxis
+          {...AXIS}
+          width={40}
+          domain={[0, 100]}
+          ticks={[0, 25, 50, 75, 100]}
+          tickFormatter={(value) => `${value}%`}
+        />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              formatter={(value, name, item) => (
+                <TooltipRow
+                  color={item.color}
+                  label={String(config[name as string]?.label ?? name)}
+                  value={`${value}% · n=${item.payload?.[`${name}_n`] ?? 0}`}
+                />
+              )}
+              labelFormatter={(_, payload) => (
+                <DayLabel day={String(payload?.[0]?.payload?.day ?? "")} />
+              )}
+            />
+          }
+        />
+        {markers.map((marker) => (
+          <ReferenceLine
+            key={`${marker.day}:${marker.shortHash}`}
+            x={marker.day}
+            stroke="var(--muted-foreground)"
+            strokeDasharray="3 3"
+            strokeOpacity={0.6}
+            label={{
+              value: marker.shortHash,
+              position: "top",
+              fontSize: 10,
+              fill: "var(--muted-foreground)",
+            }}
+          />
+        ))}
+        {series.map((entry) => (
+          <Line
+            key={entry.key}
+            dataKey={entry.key}
+            type="monotone"
+            stroke={`var(--color-${entry.key})`}
+            strokeWidth={1.5}
+            dot={{ r: 2.5 }}
+            connectNulls
+            isAnimationActive={false}
+          />
+        ))}
+        <ChartLegend content={<ChartLegendContent />} />
+      </ComposedChart>
+    </ChartContainer>
+  );
+}

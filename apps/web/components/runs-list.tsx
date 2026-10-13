@@ -1,8 +1,9 @@
 "use client";
 
+import { CheckIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { LIST_TABLE_CLASS, SearchInput } from "@/components/list-search";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +17,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { listRunsPage } from "@/lib/queries";
+import {
+  EVALUATION_FILTER_LABEL,
+  EVALUATION_FILTERS,
+  type EvaluationFilter,
+} from "@/lib/run-evaluation-filter";
 import { SOURCE_LABEL, SOURCE_ORDER, sourceLabel } from "@/lib/run-sources";
+import { cn } from "@/lib/utils";
 
 type RunRow = Awaited<ReturnType<typeof listRunsPage>>["rows"][number];
 
@@ -28,11 +35,83 @@ const SOURCES = [
   })),
 ];
 
+const PILL =
+  "rounded-full px-2 py-0.5 font-mono text-[11px] font-medium whitespace-nowrap";
+
+function EvaluationSummary({ run }: { run: RunRow }) {
+  if (run.evaluationTotal === 0) return null;
+  const needsAttention = run.evaluationFailed + run.evaluationNeedsReview > 0;
+  const unjudged = run.evaluationErrors + run.evaluationSkipped > 0;
+  const clear = run.evaluationClear === run.evaluationTotal;
+
+  if (!needsAttention && !unjudged && clear) {
+    return run.evaluationPassed > 0 ? (
+      <CheckIcon className="size-4 text-success" aria-label="No failures" />
+    ) : (
+      <span className={cn(PILL, "bg-muted text-muted-foreground")}>n/a</span>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {run.evaluationFailed > 0 && (
+        <span className={cn(PILL, "bg-destructive/15 text-destructive")}>
+          {run.evaluationFailed} fail
+        </span>
+      )}
+      {run.evaluationNeedsReview > 0 && (
+        <span className={cn(PILL, "bg-warning/15 text-warning")}>
+          {run.evaluationNeedsReview} to review
+        </span>
+      )}
+      {!needsAttention && run.evaluationErrors > 0 && (
+        <span className={cn(PILL, "bg-warning/15 text-warning")}>error</span>
+      )}
+      {!needsAttention && run.evaluationSkipped > 0 && (
+        <span className={cn(PILL, "bg-muted text-muted-foreground")}>
+          skipped
+        </span>
+      )}
+    </div>
+  );
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <fieldset className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <legend className="sr-only">{label}</legend>
+      <span
+        aria-hidden
+        className="font-mono text-[10.5px] tracking-wider text-faint uppercase"
+      >
+        {label}
+      </span>
+      {children}
+    </fieldset>
+  );
+}
+
+const EVALUATION_OPTIONS: { value: EvaluationFilter | ""; label: string }[] = [
+  { value: "", label: "All" },
+  ...EVALUATION_FILTERS.map((filter) => ({
+    value: filter,
+    label: EVALUATION_FILTER_LABEL[filter],
+  })),
+];
+
 export function RunsList({
   runs,
   total,
   query,
   source,
+  evaluation,
+  needsReviewTotal,
   page,
   pageSize,
 }: {
@@ -40,6 +119,8 @@ export function RunsList({
   total: number;
   query: string;
   source: string;
+  evaluation: EvaluationFilter | "";
+  needsReviewTotal: number;
   page: number;
   pageSize: number;
 }) {
@@ -48,10 +129,16 @@ export function RunsList({
   const [value, setValue] = useState(query);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function hrefFor(nextQuery: string, nextSource: string, nextPage: number) {
+  function hrefFor(
+    nextQuery: string,
+    nextSource: string,
+    nextEvaluation: EvaluationFilter | "",
+    nextPage: number,
+  ) {
     const params = new URLSearchParams();
     if (nextQuery.trim()) params.set("q", nextQuery.trim());
     if (nextSource) params.set("source", nextSource);
+    if (nextEvaluation) params.set("evaluation", nextEvaluation);
     if (nextPage > 1) params.set("page", String(nextPage));
     const qs = params.toString();
     return qs ? `${pathname}?${qs}` : pathname;
@@ -61,7 +148,7 @@ export function RunsList({
     setValue(next);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(
-      () => router.replace(hrefFor(next, source, 1)),
+      () => router.replace(hrefFor(next, source, evaluation, 1)),
       300,
     );
   }
@@ -82,19 +169,39 @@ export function RunsList({
           onChange={onSearch}
           placeholder="Search by agent…"
         />
-        <div className="flex gap-1.5">
+        <FilterGroup label="Source">
           {SOURCES.map((option) => (
             <Button
               key={option.value || "all"}
               variant={source === option.value ? "secondary" : "ghost"}
               size="sm"
               nativeButton={false}
-              render={<Link href={hrefFor(query, option.value, 1)} />}
+              render={
+                <Link href={hrefFor(query, option.value, evaluation, 1)} />
+              }
             >
               {option.label}
             </Button>
           ))}
-        </div>
+        </FilterGroup>
+        <FilterGroup label="Evaluation">
+          {EVALUATION_OPTIONS.map((option) => (
+            <Button
+              key={option.value || "all"}
+              variant={evaluation === option.value ? "secondary" : "ghost"}
+              size="sm"
+              nativeButton={false}
+              render={<Link href={hrefFor(query, source, option.value, 1)} />}
+            >
+              {option.label}
+              {option.value === "needs_review" && needsReviewTotal > 0 && (
+                <span className="font-mono text-[11px] text-warning">
+                  {needsReviewTotal}
+                </span>
+              )}
+            </Button>
+          ))}
+        </FilterGroup>
         <span className="font-mono text-[11px] text-faint">
           {total} {total === 1 ? "result" : "results"}
         </span>
@@ -107,6 +214,7 @@ export function RunsList({
             <TableHead>Agent</TableHead>
             <TableHead>Source</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Evaluation</TableHead>
             <TableHead>Duration</TableHead>
             <TableHead>Notes</TableHead>
           </TableRow>
@@ -115,10 +223,12 @@ export function RunsList({
           {runs.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={7}
                 className="py-10 text-center text-muted-foreground"
               >
-                No runs match this filter.
+                {evaluation === "needs_review"
+                  ? "Nothing to review."
+                  : "No runs match this filter."}
               </TableCell>
             </TableRow>
           ) : (
@@ -147,6 +257,9 @@ export function RunsList({
                 </TableCell>
                 <TableCell>
                   <RunStatusBadge status={run.status} />
+                </TableCell>
+                <TableCell>
+                  <EvaluationSummary run={run} />
                 </TableCell>
                 <TableCell className="font-mono text-[12px] text-faint tabular-nums">
                   {(run.durationMs / 1000).toFixed(1)}s
@@ -177,7 +290,7 @@ export function RunsList({
             nativeButton={page <= 1}
             render={
               page > 1 ? (
-                <Link href={hrefFor(query, source, page - 1)} />
+                <Link href={hrefFor(query, source, evaluation, page - 1)} />
               ) : undefined
             }
           >
@@ -190,7 +303,7 @@ export function RunsList({
             nativeButton={page >= totalPages}
             render={
               page < totalPages ? (
-                <Link href={hrefFor(query, source, page + 1)} />
+                <Link href={hrefFor(query, source, evaluation, page + 1)} />
               ) : undefined
             }
           >

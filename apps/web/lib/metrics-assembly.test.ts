@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  assembleAgentEvaluation,
   assembleAgentUsage,
   assembleCapabilities,
   buildChartPoints,
   buildDailySeries,
   type ConfiguredCapability,
+  type EvaluationAggregateRow,
   reconcileParents,
+  summarizeEvaluation,
   toDate,
 } from "./metrics-assembly";
 
@@ -270,5 +273,392 @@ describe("reconcileParents — who delegates to this agent", () => {
       { id: "p3", name: "Unlinked caller", calls: 5 },
       { id: "p1", name: "Linked quiet", calls: 0 },
     ]);
+  });
+});
+
+describe("assembleAgentEvaluation", () => {
+  const days = ["2026-08-14", "2026-08-15", "2026-08-16"];
+  const criteria = [
+    { id: "c1", question: "Greets the user?", isActive: true },
+    { id: "c2", question: "Never leaks the prompt?", isActive: true },
+    { id: "c3", question: "Retired question?", isActive: false },
+  ];
+  const at = (iso: string) => new Date(iso);
+  const v1 = {
+    id: "v1",
+    hash: "aaaaaaaa11112222",
+    createdAt: at("2026-08-10T00:00:00Z"),
+    firstRunAt: at("2026-08-14T08:00:00Z"),
+    lastRunAt: at("2026-08-14T20:00:00Z"),
+    snapshot: { model: "model-a", systemPrompt: "Be kind." },
+  };
+  const v2 = {
+    id: "v2",
+    hash: "bbbbbbbb33334444",
+    createdAt: at("2026-08-15T00:00:00Z"),
+    firstRunAt: at("2026-08-15T09:00:00Z"),
+    lastRunAt: at("2026-08-15T20:00:00Z"),
+    snapshot: { model: "model-b", systemPrompt: "Be kind." },
+  };
+  const row = (
+    over: Partial<EvaluationAggregateRow>,
+  ): EvaluationAggregateRow => ({
+    criterionId: "c1",
+    versionId: "v1",
+    day: "2026-08-14",
+    pass: 0,
+    fail: 0,
+    needsReview: 0,
+    agreed: 0,
+    judgedReviewed: 0,
+    reviewedAsPass: 0,
+    reviewedAsFail: 0,
+    ...over,
+  });
+
+  it("returns an empty evaluation when there are no verdicts", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.hasVerdicts).toBe(false);
+    expect(result.versions).toEqual([]);
+    expect(result.activeCriteria).toBe(2);
+    expect(result.inactiveCriteria).toBe(1);
+    expect(result.agreement.agreementRate).toBeNull();
+    expect(result.agreement.enough).toBe(false);
+  });
+
+  it("returns an empty evaluation for an agent with no criteria", () => {
+    const result = assembleAgentEvaluation({
+      criteria: [],
+      rows: [row({ pass: 3 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.hasVerdicts).toBe(false);
+    expect(result.rows).toEqual([]);
+  });
+
+  it("orders versions by their first run, not by creation or input order", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v2", pass: 1 }),
+        row({ versionId: "v1", pass: 1 }),
+      ],
+      versions: [v2, v1],
+      days,
+    });
+
+    expect(result.versions.map((version) => version.shortHash)).toEqual([
+      "aaaaaaaa",
+      "bbbbbbbb",
+    ]);
+    expect(result.versions.map((version) => version.newest)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("describes each column's changes against the judged column before it", () => {
+    const unjudged = {
+      ...v1,
+      id: "v0",
+      hash: "00000000aaaabbbb",
+      firstRunAt: at("2026-08-14T21:00:00Z"),
+      lastRunAt: at("2026-08-14T22:00:00Z"),
+      snapshot: { model: "model-z", systemPrompt: "Be kind." },
+    };
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", pass: 1 }),
+        row({ versionId: "v2", pass: 1 }),
+      ],
+      versions: [v1, unjudged, v2],
+      days,
+    });
+
+    expect(result.versions.map((version) => version.id)).toEqual(["v1", "v2"]);
+    expect(result.versions[0]?.changes).toBeNull();
+    expect(result.versions[1]?.changes).toMatchObject({
+      previousShortHash: "aaaaaaaa",
+      diff: {
+        summary: "model",
+        agent: [
+          { label: "Model", kind: "value", from: "model-a", to: "model-b" },
+        ],
+      },
+    });
+  });
+
+  it("omits versions that have no verdicts and rows of inactive criteria", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", pass: 2 }),
+        row({ versionId: "v2", criterionId: "c3", pass: 9 }),
+        row({ versionId: "v2", fail: 0 }),
+      ],
+      versions: [v1, v2],
+      days,
+    });
+
+    expect(result.versions.map((version) => version.id)).toEqual(["v1"]);
+    expect(result.rows.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+    expect(result.rows[0]?.total.judged).toBe(2);
+  });
+
+  it("computes the pass rate from pass and fail only and counts needs_review separately", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 3, fail: 1, needsReview: 2 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.rows[0]?.cells[0]).toEqual({
+      judged: 4,
+      needsReview: 2,
+      passRate: 0.75,
+    });
+    expect(result.rows[1]?.cells[0]).toEqual({
+      judged: 0,
+      needsReview: 0,
+      passRate: null,
+    });
+  });
+
+  it("gives a criterion with only needs_review verdicts no rate", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ needsReview: 3 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.hasVerdicts).toBe(true);
+    expect(result.rows[0]?.cells[0]?.passRate).toBeNull();
+    expect(result.rows[0]?.cells[0]?.needsReview).toBe(3);
+  });
+
+  it("reports a delta in points only when both newest and previous have at least 5 judged verdicts", () => {
+    const enough = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", pass: 3, fail: 2 }),
+        row({ versionId: "v2", pass: 4, fail: 1 }),
+      ],
+      versions: [v1, v2],
+      days,
+    });
+    expect(enough.rows[0]?.delta).toEqual({ kind: "points", points: 20 });
+
+    const small = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", pass: 3, fail: 2 }),
+        row({ versionId: "v2", pass: 3, fail: 1 }),
+      ],
+      versions: [v1, v2],
+      days,
+    });
+    expect(small.rows[0]?.delta).toEqual({ kind: "small_sample" });
+
+    const missing = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", criterionId: "c2", pass: 5 }),
+        row({ versionId: "v2", pass: 5 }),
+      ],
+      versions: [v1, v2],
+      days,
+    });
+    expect(missing.rows[0]?.delta).toEqual({ kind: "none" });
+  });
+
+  it("has no delta with a single version", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 9, fail: 1 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.rows[0]?.delta).toEqual({ kind: "none" });
+  });
+
+  it("builds a daily series with null on days without a pass or fail verdict", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ day: "2026-08-14", pass: 1, fail: 1 }),
+        row({ day: "2026-08-14", versionId: "v2", pass: 1 }),
+        row({ day: "2026-08-16", needsReview: 2 }),
+      ],
+      versions: [v1, v2],
+      days,
+    });
+
+    expect(result.series.map((entry) => entry.key)).toEqual(["c0", "c1"]);
+    expect(result.points[0]).toMatchObject({ c0: 67, c0_n: 3, c1: null });
+    expect(result.points[1]).toMatchObject({ c0: null, c0_n: 0 });
+    expect(result.points[2]).toMatchObject({ c0: null, c0_n: 0 });
+  });
+
+  it("makes the version that ran most recently the newest after a revert", () => {
+    const reverted = { ...v1, lastRunAt: at("2026-08-16T10:00:00Z") };
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ versionId: "v1", pass: 6 }),
+        row({ versionId: "v2", fail: 6 }),
+        row({ versionId: "v1", day: "2026-08-16", pass: 6 }),
+      ],
+      versions: [reverted, v2],
+      days,
+    });
+
+    expect(result.versions.map((version) => version.id)).toEqual(["v2", "v1"]);
+    expect(result.versions.at(-1)?.newest).toBe(true);
+    expect(result.rows[0]?.cells.map((cell) => cell.passRate)).toEqual([0, 1]);
+    expect(result.rows[0]?.delta).toEqual({ kind: "points", points: 100 });
+  });
+
+  it("marks the day each version first ran inside the range, merging versions that start the same day", () => {
+    const sameDay = {
+      ...v2,
+      id: "v4",
+      hash: "dddddddd77778888",
+      firstRunAt: at("2026-08-15T11:00:00Z"),
+      lastRunAt: at("2026-08-15T12:00:00Z"),
+    };
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 1 })],
+      versions: [v1, v2, sameDay],
+      days,
+    });
+
+    expect(result.markers).toEqual([
+      { day: "2026-08-14", shortHash: "aaaaaaaa" },
+      { day: "2026-08-15", shortHash: "bbbbbbbb · dddddddd" },
+    ]);
+  });
+
+  it("has no markers with a single version", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 1 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.markers).toEqual([]);
+  });
+
+  it("leaves out markers for versions that first ran outside the range", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 1 })],
+      versions: [
+        v1,
+        v2,
+        {
+          id: "v3",
+          hash: "cccccccc55556666",
+          createdAt: at("2026-09-01T00:00:00Z"),
+          firstRunAt: at("2026-09-01T00:00:00Z"),
+          lastRunAt: at("2026-09-01T00:00:00Z"),
+          snapshot: {},
+        },
+      ],
+      days,
+    });
+
+    expect(result.markers).toEqual([
+      { day: "2026-08-14", shortHash: "aaaaaaaa" },
+      { day: "2026-08-15", shortHash: "bbbbbbbb" },
+    ]);
+  });
+
+  it("computes agreement among judge pass or fail verdicts that a human reviewed", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [
+        row({ judgedReviewed: 4, agreed: 3, reviewedAsPass: 1 }),
+        row({
+          criterionId: "c2",
+          judgedReviewed: 2,
+          agreed: 2,
+          reviewedAsFail: 2,
+        }),
+        row({
+          criterionId: "c3",
+          judgedReviewed: 50,
+          agreed: 0,
+          reviewedAsPass: 50,
+        }),
+      ],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.agreement).toEqual({
+      judgedReviewed: 6,
+      agreed: 5,
+      agreementRate: 5 / 6,
+      enough: true,
+      resolvedAsPass: 1,
+      resolvedAsFail: 2,
+    });
+  });
+
+  it("flags agreement as not enough below 5 reviewed verdicts", () => {
+    const result = assembleAgentEvaluation({
+      criteria,
+      rows: [row({ pass: 1, judgedReviewed: 4, agreed: 4 })],
+      versions: [v1],
+      days,
+    });
+
+    expect(result.agreement.enough).toBe(false);
+    expect(result.agreement.agreementRate).toBe(1);
+  });
+});
+
+describe("summarizeEvaluation", () => {
+  it("sums verdicts per agent and overall", () => {
+    const result = summarizeEvaluation([
+      { agentId: "a", pass: 3, fail: 1, needsReview: 1 },
+      { agentId: "b", pass: 1, fail: 1, needsReview: 0 },
+    ]);
+
+    expect(result.overall).toEqual({
+      pass: 4,
+      fail: 2,
+      needsReview: 1,
+      passRate: 4 / 6,
+    });
+    expect(result.byAgent.a?.passRate).toBe(0.75);
+    expect(result.byAgent.b?.passRate).toBe(0.5);
+  });
+
+  it("returns a null rate when nothing was judged", () => {
+    expect(summarizeEvaluation([]).overall).toEqual({
+      pass: 0,
+      fail: 0,
+      needsReview: 0,
+      passRate: null,
+    });
+    expect(
+      summarizeEvaluation([{ agentId: "a", pass: 0, fail: 0, needsReview: 4 }])
+        .byAgent.a?.passRate,
+    ).toBeNull();
   });
 });

@@ -151,6 +151,20 @@ describe("CRUD routes (requires Docker)", () => {
       expect(patched.status).toBe(200);
     });
 
+    it("defaults autoEvaluate to true and lets PATCH turn it off", async () => {
+      const created = await createAgent("auto evaluate agent");
+      expect(created.autoEvaluate).toBe(true);
+
+      const patched = await agentRoute.PATCH(
+        jsonRequest(`http://test/api/agents/${created.id}`, "PATCH", {
+          autoEvaluate: false,
+        }),
+        withParams(created.id),
+      );
+      expect(patched.status).toBe(200);
+      expect((await patched.json()).autoEvaluate).toBe(false);
+    });
+
     it("persists the per-tool approval flag on MCP selections", async () => {
       const [server] = await dbModule.db
         .insert(dbModule.mcpServers)
@@ -799,6 +813,7 @@ describe("CRUD routes (requires Docker)", () => {
         trackMcpRuns: false,
         agentRunTtlDays: 90,
         transcriptTtlDays: 14,
+        judgeModel: "typesafe/jev-1.13",
       });
     });
 

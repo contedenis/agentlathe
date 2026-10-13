@@ -112,6 +112,8 @@ Three tables, deliberately separated:
 - **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
 - **`run_transcripts`** — the actual input and output messages, keyed 1:1 on the run.
 
+Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections and sub-agents. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
+
 Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` defaults to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
 
 ```bash
@@ -120,7 +122,13 @@ curl -X PATCH http://localhost:3000/api/settings \
   -d '{ "trackV1Runs": true, "agentRunTtlDays": 30, "transcriptTtlDays": 7 }'
 ```
 
-Retention is TTL-based and swept lazily (no cron): runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs; deleting a run deletes its transcript and notes.
+Retention is TTL-based and swept lazily (no cron): runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs, criteria and versions; deleting a run deletes its transcript, notes and verdicts. Agent versions have no TTL.
+
+**Evaluation.** When an agent has [criteria](#criteria), its metrics page (`/metrics/[id]`) has an Evaluation section for the selected range, and `/metrics` shows the overall pass rate, the runs awaiting review (all of them, not only those in the range, linking to the same queue in the runs list) and a pass-rate column per agent. Everything follows the criteria counting rules: your review overrides the judge, unreviewed needs-review, not-applicable, skipped and errored verdicts stay out of the rate, and only verdicts given to the criterion's current question count.
+
+- **Evaluation by agent version** — one row per active criterion, one column per agent version that was judged in the range, ordered by when each version last ran in the range (the newest is highlighted; a version is labelled by the first 8 characters of its hash, the date it first appeared and its last run). A version that ran in several periods, for example after you reverted a change, is one column, and the newest is whichever ran most recently. Each cell shows the pass rate, `n` (the verdicts it is based on) and how many are still to review; a dash means no data. To answer "did my last change help?", read the newest column against the one before it: next to the newest cell, the change in points appears only when both versions have at least 5 judged verdicts. With fewer it says "too few verdicts to compare" instead, because a swing of a few runs is noise. Under every version but the first, a one-line summary says what changed against the column to its left (the same pair the change in points compares), and **What changed** opens the diff: model, step limit, a line diff of the prompt, and the skills, tools, MCP servers and sub-agents that were added, removed or edited. Entities are matched by name, so a rename reads as one removed and one added. A change inside a sub-agent is named but not detailed; that sub-agent's own metrics page shows it. Inactive criteria are left out.
+- **Pass rate over time** — the daily pass rate of each criterion, on days that have judged verdicts. Dashed vertical lines mark the day a new agent version first ran.
+- **Judge vs human** — among verdicts you reviewed that the judge had called pass or fail, the share where you kept its verdict (it needs at least 5 reviews to show a percentage), and how you resolved the ones the judge left as needs review.
 
 ## Fix drafts
 
@@ -141,6 +149,57 @@ curl -X POST http://localhost:3000/api/runs/<run-uuid>/fix-drafts \
 ```
 
 The Home page surfaces a **"Runs to review"** list — runs that either failed or carry an open note — instead of just the most recent ones, so the queue stays useful once you have thousands of runs.
+
+## Criteria
+
+A criterion is a yes/no question a judge (TypeSafe's Jev, through OpenRouter's Decisions API by default) answers about every run of an agent. Manage them in the **Evaluation** tab of the agent page.
+
+Writing one:
+
+- **Phrase the question so that yes means the run did well**, e.g. "Did the assistant avoid promising a refund without confirmation?".
+- **Describe both sides.** "Passes when" and "Fails when" are what make the judge reliable; with only one of them the text is merely appended to the question.
+- **"Only evaluate when"** (optional) is a second yes/no question. Runs where its answer is no are marked not applicable instead of judged.
+- **Advanced:** "Fail below" and "Pass above" (0 to 1, defaults 0.2 and 0.8) turn the judge's probability into a verdict. Scores between them are flagged **needs review**.
+
+```bash
+curl -X POST http://localhost:3000/api/agents/<agent-uuid>/criteria \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Did the assistant avoid promising a refund without confirmation?",
+    "passDescription": "No refund is promised, or it is promised after the refund tool confirmed it.",
+    "failDescription": "A refund is promised before any tool confirmed it.",
+    "appliesWhen": "Did the user ask for a refund?"
+  }'
+
+# judge one run now, against all active criteria or only some
+curl -X POST http://localhost:3000/api/runs/<run-uuid>/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{ "criterionIds": ["<criterion-uuid>"] }'
+```
+
+Each criterion shows its pass rate over the runs of the last 30 days (pass / (pass + fail), where a human review overrides the judge; verdicts given under an earlier wording of the question do not count, so editing the question starts a fresh rate) and how many verdicts still need review. Deactivating a criterion stops evaluating it and keeps its verdicts; deleting it deletes them too.
+
+**From a fix draft:** on a run page, "Turn into criterion" on a note opens the dialog with the note's rationale as "Fails when". Write the question and the passing side. While you type, the dialog checks the criterion against the run the note came from and tells you whether it fails there as expected; the check never blocks saving.
+
+**Copy from agent…** copies selected criteria from another agent. The copies are independent of the originals.
+
+**Evaluation** runs automatically once a run's transcript is stored, unless you switch off "Evaluate new runs automatically" in the agent form, under **Recording and evaluation** next to "Record external traffic" (`autoEvaluate` on the agent API; the Evaluation tab says which way it is set). Only runs with a stored transcript can be judged, so /v1 and MCP runs need the agent's traffic recording on. **Re-evaluate recent runs** judges the agent's latest runs again and reports the totals (a human review is kept unless the criterion's question was edited since). If the judge endpoint does not serve the Decisions API, or the key or judge model is wrong, the tab shows the last evaluation error. The judge model is set under the metrics page's settings ("Judge model", default `typesafe/jev-1.13`, or `judgeModel` in `PATCH /api/settings`), which also shows the host the judge is called on.
+
+**Another judge endpoint.** By default the judge is OpenRouter's Decisions API, reached with `PROVIDER_API_KEY`. If `PROVIDER_BASE_URL` points somewhere else (OpenAI, Ollama, vLLM), that endpoint does not serve the judge and evaluations fail until you set the two variables below. To call Jev somewhere else, set two env vars: `JUDGE_URL`, the full endpoint, and `JUDGE_API_KEY`, its key. For TypeSafe's own API that is `https://api.typesafe.ai/v1/systemone`, with the judge model set to a TypeSafe id such as `jev-latest`. Any host that speaks the same Decisions / System One API works the same way (AIMLAPI, a LiteLLM proxy). `JUDGE_URL` without `JUDGE_API_KEY` refuses to call: the provider key is never sent to another host. `JUDGE_API_KEY` on its own keeps OpenRouter and only bills judge calls to a different key.
+
+## Reviewing verdicts
+
+The run page (`/runs/[id]`) puts the run's counts in one line and its review work in two tabs, **Evaluation** and **Fix drafts**, each labelled with what waits in it (verdicts to review, open notes). It opens on Evaluation when a verdict needs review, on Fix drafts when only notes are open, and switches to Fix drafts when you save a note. The Evaluation tab lists one verdict per criterion, worst first: unreviewed fails, then verdicts that need review, then errors and skips, then the ones a human already reviewed, then passes and not-applicable. Each row shows the question as it was judged (with a note when the criterion has been reworded since), the verdict, the judge's probability of a pass, and why a verdict is missing when the judge errored or skipped the run (transcript too long, or the run paused on an approval). **Re-evaluate** judges the run again against the agent's active criteria.
+
+- **Human review.** On a pass, fail or needs-review verdict, **Pass** / **Fail** records your own call; it overrides the judge in the pass rates, the counts and the runs list: the row's badge shows your verdict and a "Reviewed · judge said ..." line keeps what the judge said when you disagreed. **Undo** removes it. A review belongs to the question it answered: re-evaluating after the question was edited discards it, while re-evaluating under the same wording keeps it.
+- **Note a fix.** On a failed (or still undecided) verdict, **Note a fix** opens the usual fix-draft dialog anchored to the run's last assistant turn, with the rationale prefilled as "Failed criterion: ..." ("Judge unsure on criterion: ..." when the verdict is still undecided). Edit it, pick the lever and save.
+- **No criteria, no transcript.** An agent without active criteria shows a link to the agent page; a run without a stored transcript cannot be evaluated (for /v1 and MCP runs, turn on the agent's external traffic recording).
+
+On the **Runs** page every row summarises its verdicts: a red badge counts failures (a human review counts instead of the judge), an amber one counts verdicts still waiting for review, and a green check ("No failures") means every verdict passed or did not apply and at least one passed (a muted "n/a" when none applied). When nothing needs attention but the judge errored or skipped a run, an "error" or "skipped" badge says so. Only verdicts of active criteria under their current wording are counted. The **Evaluation** filter next to the **Source** buttons narrows the list, and is kept when you change the page or the source:
+
+- **Needs review** is the review queue: runs with at least one unreviewed needs-review verdict, with how many there are next to its name. When it is empty the list says "Nothing to review."
+- **Failed**: runs with at least one failing verdict, after human reviews.
+- **Not evaluated**: runs with a stored transcript and no counted verdicts, for agents that have at least one active criterion, to spot gaps (for example runs from before you wrote a criterion).
 
 ---
 
@@ -244,6 +303,8 @@ So the default is: your own experiments are recorded, third-party traffic is not
 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key, a customer's email or a medical record in a message, that is what lands in your database, in plaintext, on any agent you switched recording on for. agentlathe does not detect, mask or hash anything. Turning on recording for an agent that serves real users is a decision about their data, not just yours — make it deliberately, and tell them if that is what your jurisdiction expects.
 
-Retention is TTL-based and swept lazily (no cron): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs, and deleting a run deletes its transcript and notes.
+Retention is TTL-based and swept lazily (no cron): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs, and deleting a run deletes its transcript, notes and verdicts. A verdict outlives the transcript it was judged on, which is why a run older than the transcript TTL can no longer be re-evaluated.
+
+**Evaluated transcripts leave the instance.** When an agent has active criteria, each run that is evaluated (or previewed against a draft criterion) is sent to the judge as text: TypeSafe's Jev, through OpenRouter by default or the host `JUDGE_URL` names. Agents without criteria send nothing, and switching off "Evaluate new runs automatically" limits it to the runs you evaluate by hand.
 
 The reasoning behind these defaults, and the tradeoffs they accept, are in [SECURITY.md](../SECURITY.md).

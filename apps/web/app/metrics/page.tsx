@@ -16,7 +16,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TableCell, TableHead, TableRow } from "@/components/ui/table";
 import { compact, fmt, formatCost, formatDuration } from "@/lib/format";
-import { buildChartPoints } from "@/lib/metrics-assembly";
+import { judgeHost } from "@/lib/judge";
+import {
+  buildChartPoints,
+  type EvaluationSummary,
+} from "@/lib/metrics-assembly";
 import {
   type MetricsRangeParams,
   parseMetricsRange,
@@ -28,6 +32,19 @@ import { estimateCostUsd, getOpenRouterModels } from "@/lib/openrouter-models";
 import { getMetricsData } from "@/lib/queries-metrics";
 import { scheduleRetentionSweep } from "@/lib/retention";
 import { sourceLabel } from "@/lib/run-sources";
+
+function PassRateCell({ stats }: { stats: EvaluationSummary | undefined }) {
+  if (!stats || stats.passRate === null)
+    return <span className="text-muted-foreground">—</span>;
+  return (
+    <>
+      {Math.round(stats.passRate * 100)}%
+      <div className="text-[11px] text-muted-foreground">
+        n={stats.pass + stats.fail}
+      </div>
+    </>
+  );
+}
 
 export default async function MetricsPage({
   searchParams,
@@ -48,6 +65,7 @@ export default async function MetricsPage({
       days,
       firstRunAt,
       lastRunAt,
+      evaluation,
     },
     models,
   ] = await Promise.all([getMetricsData(range), getOpenRouterModels()]);
@@ -89,6 +107,12 @@ export default async function MetricsPage({
     firstRunAt.getTime() <= previousRangeStart(range).getTime();
 
   const period = periodLabel(range);
+  const judgedTotal = evaluation.overall.pass + evaluation.overall.fail;
+  const hasEvaluation =
+    judgedTotal +
+      evaluation.overall.needsReview +
+      evaluation.awaitingReviewRuns >
+    0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -99,7 +123,7 @@ export default async function MetricsPage({
           description="One row per run, with no message content. Only what you enable gets recorded."
         />
         <div className="flex flex-wrap items-center gap-2">
-          <TrackingSettings settings={settings} />
+          <TrackingSettings settings={settings} judgeHost={judgeHost()} />
           <MetricsRangePicker basePath="/metrics" range={range} />
         </div>
       </div>
@@ -157,6 +181,38 @@ export default async function MetricsPage({
               }
             />
           </div>
+
+          {hasEvaluation && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Stat
+                label="Evaluation pass rate"
+                value={
+                  evaluation.overall.passRate === null
+                    ? "—"
+                    : `${Math.round(evaluation.overall.passRate * 100)}%`
+                }
+                sub={`${fmt(judgedTotal)} judged verdicts across agents`}
+                hint="Pass over pass plus fail across every agent's active criteria. Your reviews count over the judge's verdicts. Unsure verdicts nobody resolved yet are left out, and so are verdicts for a question that has since been edited."
+              />
+              <Stat
+                label="Runs awaiting review"
+                value={fmt(evaluation.awaitingReviewRuns)}
+                sub={
+                  evaluation.awaitingReviewRuns > 0 ? (
+                    <Link
+                      href="/runs?evaluation=needs_review"
+                      className="text-foreground hover:text-primary"
+                    >
+                      Open the review queue
+                    </Link>
+                  ) : (
+                    "nothing waiting for a human verdict"
+                  )
+                }
+                hint="Runs with at least one verdict the judge could not decide and nobody has resolved yet, for an active criterion on its current question. It is not limited to the selected range: it counts the same runs as the review queue it links to."
+              />
+            </div>
+          )}
 
           <div className="grid gap-5 xl:grid-cols-2">
             <Card>
@@ -282,6 +338,16 @@ export default async function MetricsPage({
                       </MetricHint>
                     </TableHead>
                     <TableHead>
+                      <MetricHint label="Pass rate">
+                        <span>
+                          Share of judged verdicts that passed the agent's
+                          active criteria in the period, with your reviews
+                          counted over the judge's. A dash means nothing was
+                          judged.
+                        </span>
+                      </MetricHint>
+                    </TableHead>
+                    <TableHead>
                       <MetricHint label="Cost">
                         <span>
                           Estimated with the prices the provider's catalog
@@ -367,6 +433,9 @@ export default async function MetricsPage({
                       ) : (
                         <span className="text-muted-foreground">no errors</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <PassRateCell stats={evaluation.byAgent[row.agentId]} />
                     </TableCell>
                     <TableCell>
                       {formatCost(

@@ -4,7 +4,6 @@ import {
   createUIMessageStreamResponse,
   type InferUIMessageChunk,
   type UIMessage,
-  type UIMessageStreamOnEndCallback,
 } from "ai";
 import { buildDashboardToolApproval } from "./approval";
 import type { AgentRow } from "./loaders";
@@ -19,7 +18,10 @@ export async function streamAgentForUI(
   agent: AgentRow,
   messages: UIMessage[],
   options: {
-    onFinish?: UIMessageStreamOnEndCallback<UIMessage>;
+    onTranscript?: (
+      input: UIMessage[],
+      output: UIMessage[],
+    ) => PromiseLike<void> | void;
     abortSignal?: AbortSignal;
     onRunEnd?: (run: {
       stats: AgentRunStats;
@@ -28,7 +30,7 @@ export async function streamAgentForUI(
     }) => Promise<string | null>;
   } = {},
 ): Promise<Response> {
-  const { onFinish, abortSignal, onRunEnd } = options;
+  const { onTranscript, abortSignal, onRunEnd } = options;
   const {
     agent: runtime,
     cleanup,
@@ -71,7 +73,14 @@ export async function streamAgentForUI(
             error: streamError,
           });
           resolveRunId(typeof recorded === "string" ? recorded : null);
-          await onFinish?.(event);
+          // An approval continuation extends the last request message in place: it is this run's output.
+          const kept = event.isContinuation
+            ? messages.length - 1
+            : messages.length;
+          await onTranscript?.(
+            messages.slice(0, kept),
+            event.messages.slice(kept),
+          );
         } finally {
           resolveRunId(null);
         }

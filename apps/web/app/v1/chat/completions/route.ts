@@ -1,14 +1,14 @@
 import {
-  type AgentRow,
   buildAgentRuntime,
   buildHeadlessToolApproval,
-  createRunRecorder,
   loadActiveAgent,
   openAIMessagesToModelMessages,
+  type RunRecorder,
   toOpenAIChatCompletion,
   toOpenAIChatCompletionStream,
 } from "@agentlathe/runner";
 import { z } from "zod";
+import { createRecorder } from "@/lib/run-recorder";
 
 const requestSchema = z.object({
   model: z.string().min(1),
@@ -63,17 +63,18 @@ export async function POST(req: Request) {
   let runtime: Awaited<ReturnType<typeof buildAgentRuntime>>["agent"];
   let cleanup: Awaited<ReturnType<typeof buildAgentRuntime>>["cleanup"];
   let stats: Awaited<ReturnType<typeof buildAgentRuntime>>["stats"];
-  let agent: AgentRow;
+  let recorder: RunRecorder;
   try {
-    const found = await loadActiveAgent(body.model);
-    if (!found) {
+    const agent = await loadActiveAgent(body.model);
+    if (!agent) {
       return errorResponse(
         `Model '${body.model}' not found`,
         "invalid_request_error",
         404,
       );
     }
-    agent = found;
+    const threadId = req.headers.get("x-thread-id")?.slice(0, 200) || null;
+    recorder = createRecorder({ agent, source: "v1", threadId });
 
     ({
       agent: runtime,
@@ -90,9 +91,6 @@ export async function POST(req: Request) {
       500,
     );
   }
-
-  const threadId = req.headers.get("x-thread-id")?.slice(0, 200) || null;
-  const recorder = createRunRecorder({ agent, source: "v1", threadId });
 
   if (body.stream) {
     const abort = new AbortController();
@@ -137,11 +135,13 @@ export async function POST(req: Request) {
     }
   }
 
+  let generated = false;
   try {
     const result = await runtime.generate({
       messages,
       abortSignal: req.signal,
     });
+    generated = true;
     await recorder.record({ stats: stats() });
     await recorder.attachTranscript(
       body.messages,
@@ -150,8 +150,10 @@ export async function POST(req: Request) {
     return Response.json(toOpenAIChatCompletion(result, body.model));
   } catch (err) {
     console.error(err);
-    await recorder.record({ stats: stats(), error: err });
-    await recorder.attachTranscript(body.messages, []);
+    if (!generated) {
+      await recorder.record({ stats: stats(), error: err });
+      await recorder.attachTranscript(body.messages, []);
+    }
     return errorResponse(
       "The server had an error while processing your request.",
       "api_error",

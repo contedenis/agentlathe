@@ -3,12 +3,12 @@ import {
   type AgentProgress,
   type AgentRow,
   type AgentRunStats,
-  createRunRecorder,
   generateWithApprovals,
   loadActiveAgent,
   type PendingApproval,
 } from "@agentlathe/runner";
 import { mcpApprovalBroker as broker } from "@/lib/approval-broker";
+import { createRecorder } from "@/lib/run-recorder";
 
 const SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18"];
 const DEFAULT_PROTOCOL = "2025-11-25";
@@ -124,7 +124,7 @@ function streamAgentCall(
           });
         });
 
-      const recorder = createRunRecorder({ agent, source: "mcp" });
+      const recorder = createRecorder({ agent, source: "mcp" });
       let stats: AgentRunStats | undefined;
       try {
         const { text } = await generateWithApprovals(agent, message, {

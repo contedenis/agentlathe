@@ -52,6 +52,7 @@ type AgentFormValues = {
   systemPrompt: string | null;
   maxSteps: number | null;
   recordTraffic: boolean;
+  autoEvaluate: boolean;
   skillIds: string[];
   toolIds: string[];
   subAgentIds: string[];
@@ -79,6 +80,9 @@ export function AgentForm({
   const [maxSteps, setMaxSteps] = useState(String(initial?.maxSteps ?? 20));
   const [recordTraffic, setRecordTraffic] = useState(
     initial?.recordTraffic ?? false,
+  );
+  const [autoEvaluate, setAutoEvaluate] = useState(
+    initial?.autoEvaluate ?? true,
   );
   const [skillIds, setSkillIds] = useState<string[]>(initial?.skillIds ?? []);
   const [toolIds, setToolIds] = useState<string[]>(initial?.toolIds ?? []);
@@ -130,6 +134,7 @@ export function AgentForm({
       systemPrompt: systemPrompt || null,
       maxSteps: parsedMaxSteps,
       recordTraffic,
+      autoEvaluate,
       skillIds,
       toolIds,
       subAgentIds,
@@ -270,21 +275,6 @@ export function AgentForm({
               className="max-w-[120px]"
             />
           </div>
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="recordTraffic"
-                checked={recordTraffic}
-                onCheckedChange={setRecordTraffic}
-              />
-              <Label htmlFor="recordTraffic">Record external traffic</Label>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Stores the messages of the calls this agent answers through the
-              API and MCP, so you can review them. Playground runs are always
-              stored. Transcripts are kept unredacted.
-            </p>
-          </div>
         </CardContent>
       </Card>
 
@@ -304,6 +294,47 @@ export function AgentForm({
             mcpTools={mcpTools}
             onMcpToolsChange={setMcpTools}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recording and evaluation</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-[18px]">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="recordTraffic"
+                checked={recordTraffic}
+                onCheckedChange={setRecordTraffic}
+              />
+              <Label htmlFor="recordTraffic">Record external traffic</Label>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Stores the messages of the calls this agent answers through the
+              API and MCP, so you can review them. Playground runs are always
+              stored. Transcripts are kept unredacted.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="autoEvaluate"
+                checked={autoEvaluate}
+                onCheckedChange={setAutoEvaluate}
+              />
+              <Label htmlFor="autoEvaluate">
+                Evaluate new runs automatically
+              </Label>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Judges every run with a stored transcript against this
+              agent&apos;s criteria as soon as it ends. Criteria are managed in
+              the Evaluation tab of the agent page; with none, nothing is
+              judged.
+            </p>
+          </div>
         </CardContent>
       </Card>
 

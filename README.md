@@ -21,18 +21,19 @@ Models come from any **OpenAI-compatible provider**. The default is [OpenRouter]
 **It is not** any of these, and the gap is deliberate:
 
 - **No auth.** Single-tenant by design. The operator is expected to put a reverse proxy with authentication in front of it — see [Security model](#security-model-there-is-no-auth).
-- **No evaluators.** You can note what went wrong on a run; nothing scores runs for you.
 - **No memory.** Agents do not accumulate knowledge between runs.
 - **No scheduling.** Nothing runs an agent for you on a timer or an event.
 
-The last three are [ideas](#ideas), not commitments. Fix drafts — the notes you leave on a run — are the seed of the first two: they are where the evidence for an evaluator, and the raw material for memory, come from.
+The last two are [ideas](#ideas), not commitments. Fix drafts — the notes you leave on a run — are the raw material memory would start from.
 
 Reviewing a run is the half that is hard to do without a tool: what the agent loaded, which sub-agent it delegated to, what it called, what it stopped to ask permission for — and the note you leave on the exact turn that went wrong.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/run-review-dark.png">
-  <img alt="A recorded run: the agent loads a skill, delegates to a sub-agent, calls a tool, and pauses for approval on another, with a fix draft attached to the turn." src="docs/images/run-review-light.png">
+  <img alt="A recorded run: the agent loads a skill, delegates to a sub-agent and calls its tools, next to the judge's verdict on each of the agent's criteria, with one open fix draft waiting in the next tab." src="docs/images/run-review-light.png">
 </picture>
+
+Reading every run doesn't scale, so agents can also carry **criteria**: yes/no questions — "did it avoid promising a refund it couldn't confirm?" — that a judge model answers about each recorded run. A fix draft turns into a criterion in one click, checked on the spot against the run it came from. Verdicts the judge is unsure about land in a review queue, your review overrides the judge, and the metrics compare each criterion's pass rate across agent versions, so you can see whether the change you made actually helped. The judge is TypeSafe's Jev — through OpenRouter by default, or straight from TypeSafe or any other host that serves it — which costs a fraction of a cent per run.
 
 One more thing that belongs up here: agentlathe is **built and maintained by one person**, best-effort, with no support channel — read [Project status](#project-status) before you build anything on it.
 
@@ -41,7 +42,7 @@ One more thing that belongs up here: agentlathe is **built and maintained by one
 - **Node 22+** (`engines.node` is `>=22`; CI and the Docker images both run 22)
 - **pnpm 10** (`packageManager` pins `pnpm@10.24.0`) — Node 22/24 ship Corepack, so `corepack enable` is enough; Node 25+ dropped it, install pnpm another way (e.g. `npm install -g pnpm`) instead
 - **Postgres 16+**, or Docker if you let the compose stack provide it — Postgres is the only supported database
-- An **API key for your model provider** — OpenRouter by default, or any OpenAI-compatible endpoint (OpenAI, Anthropic's compatibility endpoint, Ollama, LiteLLM, vLLM) pointed at with `PROVIDER_BASE_URL`
+- An **API key for your model provider** — OpenRouter by default, or any OpenAI-compatible endpoint (OpenAI, Anthropic's compatibility endpoint, Ollama, LiteLLM, vLLM) pointed at with `PROVIDER_BASE_URL`. Evaluating runs against criteria needs a Jev endpoint: OpenRouter's Decisions API with the same key by default, or `JUDGE_URL` + `JUDGE_API_KEY` for TypeSafe's own API or another host (see `.env.example`)
 
 ## Quickstart with Docker
 
@@ -76,7 +77,7 @@ The example tools they create point at a **public echo service** (httpbin.org / 
 
 The `app` container is the Next.js standalone output, without pnpm or the workspace source — so `docker compose exec app pnpm ...` will not work. Use `docker compose run --rm migrator` for anything that needs the toolchain.
 
-To point at something other than OpenRouter, set `PROVIDER_BASE_URL` in `.env` (see `.env.example`) — compose forwards it to the app.
+To point at something other than OpenRouter, set `PROVIDER_BASE_URL` in `.env` (see `.env.example`) — compose forwards it to the app. The judge that evaluates runs is not OpenAI-compatible, so that endpoint will not serve it: set `JUDGE_URL` and `JUDGE_API_KEY` too if you use criteria.
 
 To stop the stack, `docker compose down`. That keeps the `postgres_data` volume, so your agents and runs survive a restart — which also means **it keeps the password Postgres was initialized with**: change `POSTGRES_PASSWORD` in `.env` after the first run and the app will fail to authenticate against a database that never saw the new value. To start clean, delete the volume too:
 
@@ -101,7 +102,7 @@ curl http://localhost:3000/v1/chat/completions \
 
 Each active agent is also its own MCP server at `POST /mcp/agents/{agent-id}`, exposing one tool. Point Claude Desktop, Cursor or any MCP client at it.
 
-The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, metrics and fix drafts, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
+The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 
 ## Documentation
 
@@ -109,9 +110,10 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | The manual: build agents, attach tools, call them, review the runs |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running without Docker, production deployment, reverse proxy, backups |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, runner internals |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, evaluation, runner internals |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Scripts, test levels, conventions |
 | [SECURITY.md](SECURITY.md) | Accepted tradeoffs, deferred work, how to report a vulnerability |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and what an upgrade asks of you |
 
 ## Recording and privacy
 
@@ -119,13 +121,15 @@ Two things get stored and they are governed separately: the **run** (one row of 
 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key or a customer's email in a message, that is what lands in your database, in plaintext. Turning on recording for an agent that serves real users is a decision about their data, not just yours.
 
+When an agent has criteria, its stored transcripts are also sent to the judge (TypeSafe's Jev, through OpenRouter's Decisions API or the host `JUDGE_URL` names) to be evaluated.
+
 The gates, the defaults and the retention TTLs are in [docs/USAGE.md](docs/USAGE.md#recording-and-privacy); the reasoning behind them, in [SECURITY.md](SECURITY.md).
 
 What those rows add up to: how many runs came in through which transport, how many failed, how slow the typical one is against the slowest 5%, and what it cost.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/metrics-dark.png">
-  <img alt="The metrics page: runs, latency, tokens and estimated cost, with runs per day stacked by transport and a p50/p95 latency curve." src="docs/images/metrics-light.png">
+  <img alt="The metrics page: runs, latency, tokens and estimated cost, the evaluation pass rate and the runs awaiting review, with runs per day stacked by transport and a p50/p95 latency curve." src="docs/images/metrics-light.png">
 </picture>
 
 Separately: Next.js and Turborepo each phone home anonymous build telemetry by default. Docker and CI already disable both (`NEXT_TELEMETRY_DISABLED=1`, `TURBO_TELEMETRY_DISABLED=1`); set the same two variables yourself if you build or run scripts outside Docker.
@@ -169,7 +173,7 @@ agentlathe has a single maintainer and no review commitments — read [CONTRIBUT
 
 Where the design is headed, in the order each piece would unlock the next. No dates, no commitment — see [Project status](#project-status).
 
-1. **Evaluators** — score a run automatically, so review scales past reading them one by one. Fix drafts are the labelled data this starts from.
+1. **Replay** — re-run recorded inputs against the current agent version and judge them with the same criteria, to test a change before real traffic does. Today's evaluators only judge runs that already happened.
 2. **Memory** — let an agent carry what it learned across runs, instead of rebuilding context every call.
 3. **Scheduling** — run agents on a timer or an event, not only when someone calls them.
 

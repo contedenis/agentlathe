@@ -34,17 +34,19 @@ function DraftCard({
   messages,
   onStatusChange,
   onEdit,
+  onPromote,
   onJumpTo,
 }: {
   draft: FixDraft;
   messages: UIMessage[];
   onStatusChange: (draftId: string, status: FixDraft["status"]) => void;
   onEdit: (draft: FixDraft) => void;
+  onPromote: (draft: FixDraft) => void;
   onJumpTo: (key: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border p-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge variant={draft.status === "open" ? "default" : "secondary"}>
           {STATUS_LABEL[draft.status]}
         </Badge>
@@ -58,13 +60,13 @@ function DraftCard({
           <ArrowRightIcon className="size-3" />
         </Button>
       </div>
-      <p className="text-sm">{draft.rationale}</p>
+      <p className="text-sm break-words">{draft.rationale}</p>
       {draft.proposedValue && (
         <p className="rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
           {draft.proposedValue}
         </p>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {draft.status !== "applied" && (
           <Button
             variant="outline"
@@ -103,6 +105,14 @@ function DraftCard({
         >
           Edit
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs"
+          onClick={() => onPromote(draft)}
+        >
+          Turn into criterion
+        </Button>
       </div>
     </div>
   );
@@ -113,12 +123,14 @@ export function FixDraftsPanel({
   messages,
   onStatusChange,
   onEdit,
+  onPromote,
   onJumpTo,
 }: {
   drafts: FixDraft[];
   messages: UIMessage[];
   onStatusChange: (draftId: string, status: FixDraft["status"]) => void;
   onEdit: (draft: FixDraft) => void;
+  onPromote: (draft: FixDraft) => void;
   onJumpTo: (key: string) => void;
 }) {
   if (drafts.length === 0) {
@@ -149,6 +161,7 @@ export function FixDraftsPanel({
                   messages={messages}
                   onStatusChange={onStatusChange}
                   onEdit={onEdit}
+                  onPromote={onPromote}
                   onJumpTo={onJumpTo}
                 />
               ))}

@@ -117,7 +117,10 @@ describe("buildPrepareStep — compaction", () => {
 });
 
 type CapturedOptions = {
-  onEnd?: (event: { messages: UIMessage[] }) => Promise<void>;
+  onEnd?: (event: {
+    messages: UIMessage[];
+    isContinuation: boolean;
+  }) => Promise<void>;
   onError?: (error: unknown) => string;
   abortSignal?: AbortSignal;
 };
@@ -150,23 +153,23 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     };
   };
 
-  it("onEnd: cleans up MCP BEFORE onFinish (a hung LLM title must not hold clients open)", async () => {
+  it("onEnd: cleans up MCP BEFORE onTranscript (a hung write must not hold clients open)", async () => {
     const order: string[] = [];
     const cleanup = vi.fn(async () => {
       order.push("cleanup");
     });
     mockCleanup(cleanup);
     const getOptions = capture();
-    const onFinish = vi.fn(async () => {
+    const onTranscript = vi.fn(async () => {
       order.push("finish");
     });
 
-    await streamAgentForUI(agentRow, [], { onFinish });
-    await getOptions().onEnd?.({ messages: [] });
+    await streamAgentForUI(agentRow, [], { onTranscript });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
 
     expect(order).toEqual(["cleanup", "finish"]);
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledTimes(1);
   });
 
   it("onError: cleans up and returns the generic message", async () => {
@@ -181,16 +184,16 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it("onEnd: cleanup runs even if onFinish throws", async () => {
+  it("onEnd: cleanup runs even if onTranscript throws", async () => {
     const cleanup = vi.fn(async () => {});
     mockCleanup(cleanup);
     const getOptions = capture();
-    const onFinish = vi.fn().mockRejectedValue(new Error("db down"));
+    const onTranscript = vi.fn().mockRejectedValue(new Error("db down"));
 
-    await streamAgentForUI(agentRow, [], { onFinish });
-    await expect(getOptions().onEnd?.({ messages: [] })).rejects.toThrow(
-      "db down",
-    );
+    await streamAgentForUI(agentRow, [], { onTranscript });
+    await expect(
+      getOptions().onEnd?.({ messages: [], isContinuation: false }),
+    ).rejects.toThrow("db down");
 
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
@@ -212,7 +215,7 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     const response = await streamAgentForUI(agentRow, [], {
       onRunEnd: async () => "run-42",
     });
-    await getOptions().onEnd?.({ messages: [] });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
     const body = await response.text();
 
     expect(body).toContain("data-run");
@@ -229,7 +232,7 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     getOptions().onError?.(boom);
     // The SDK calls onError again with the masked text; the real cause must survive.
     getOptions().onError?.(new Error("An error occurred."));
-    await getOptions().onEnd?.({ messages: [] });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
 
     expect(onRunEnd).toHaveBeenCalledWith(
       expect.objectContaining({ error: boom }),
@@ -242,7 +245,7 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     const onRunEnd = vi.fn(async () => "run-100");
 
     await streamAgentForUI(agentRow, [], { onRunEnd });
-    await getOptions().onEnd?.({ messages: [] });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
 
     expect(onRunEnd).toHaveBeenCalledWith(
       expect.objectContaining({ error: undefined }),
@@ -257,7 +260,7 @@ describe("streamAgentForUI — cleanup and persistence", () => {
       onRunEnd: async () => "run-101",
     });
     getOptions().onError?.(new Error("boom"));
-    await getOptions().onEnd?.({ messages: [] });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
     const body = await response.text();
 
     expect(body).toContain("run-101");
@@ -270,7 +273,7 @@ describe("streamAgentForUI — cleanup and persistence", () => {
     const response = await streamAgentForUI(agentRow, [], {
       onRunEnd: async () => null,
     });
-    await getOptions().onEnd?.({ messages: [] });
+    await getOptions().onEnd?.({ messages: [], isContinuation: false });
     const body = await response.text();
 
     expect(body).not.toContain("data-run");

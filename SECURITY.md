@@ -32,6 +32,8 @@ When recording is on for an agent, `run_transcripts` stores the **actual message
 
 Retention limits the exposure window rather than removing it: transcripts default to a 14-day TTL, shorter than the 90 days for run metadata, and are swept lazily. Deleting an agent or a run deletes its transcripts by cascade.
 
+**Evaluating a run sends its transcript to a second party.** When one of an agent's runs is evaluated against its criteria, or previewed against a draft criterion, the run's transcript — serialized as text, tool inputs and outputs included (each capped at 2000 characters) — goes to TypeSafe, the provider behind the Jev judge — through OpenRouter's Decisions API by default, or through whatever host `JUDGE_URL` names (TypeSafe directly, or a gateway in between) — on top of whatever the agent's own model provider already saw. Nothing is sent for a run nobody evaluates or previews. `JUDGE_URL` is an env var and not a setting on purpose: an editable URL would let anyone who reaches the dashboard point the judge, and its key, at their own server. For the same reason a `JUDGE_URL` without its own `JUDGE_API_KEY` refuses to call instead of falling back to `PROVIDER_API_KEY`.
+
 **Revisit — redaction on write, or per-agent encryption — before** switching recording on for an agent that serves other people's data, and check what your jurisdiction expects you to tell them first.
 
 ## MCP authentication: PAT today, OAuth is deferred
@@ -67,7 +69,7 @@ The `needsApproval` flag exists for HTTP tools and, per agent, for each selected
 
 ## Retention sweep is lazy and tied to dashboard page loads
 
-Run and transcript retention is enforced by a lazy sweep: when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, a background job queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). In a headless instance — one that only receives `/v1` API or `/mcp` server traffic and never loads the dashboard — the sweep never runs, and expired data accumulates indefinitely.
+Run and transcript retention is enforced by a lazy sweep: when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, a background job queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions. In a headless instance — one that only receives `/v1` API or `/mcp` server traffic and never loads the dashboard — the sweep never runs, and expired data accumulates indefinitely.
 
 **Is that acceptable?** For a development lab bound to `127.0.0.1` — yes. Headless instances are rare in the current scope, and lazy deletion is simpler than a scheduled cron job. The data is already single-tenant and not exposed.
 

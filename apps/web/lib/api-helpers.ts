@@ -5,10 +5,12 @@ export { isUuid } from "@agentlathe/db";
 export async function parseBody<T>(
   req: Request,
   schema: ZodType<T>,
+  { allowEmpty = false }: { allowEmpty?: boolean } = {},
 ): Promise<{ data: T } | { error: Response }> {
   let json: unknown;
   try {
-    json = await req.json();
+    const text = await req.text();
+    json = allowEmpty && !text.trim() ? {} : JSON.parse(text);
   } catch {
     return {
       error: Response.json({ error: "Invalid JSON body." }, { status: 400 }),
@@ -69,6 +71,9 @@ export function dbErrorResponse(err: unknown): Response {
       { error: "Referenced resource does not exist." },
       { status: 400 },
     );
+  }
+  if (code === "22003") {
+    return Response.json({ error: "Value out of range." }, { status: 400 });
   }
   if (code === "23514") {
     if (constraint === SELF_REFERENCE_CHECK_CONSTRAINT) {

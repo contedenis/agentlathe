@@ -15,3 +15,4 @@ Reviews are best-effort and not guaranteed (single maintainer — see [CONTRIBUT
 - [ ] `pnpm test` passes
 - [ ] Tests added/updated for new changes
 - [ ] Documentation updated if behavior changed
+- [ ] `CHANGELOG.md` has an entry under `Unreleased` if users can see the change

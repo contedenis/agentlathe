@@ -20,6 +20,7 @@ export type AnnotateTarget = {
   messageId: string;
   anchor: FixDraftAnchor;
   label: string;
+  rationale?: string;
 };
 
 type AnnotateHooks = {

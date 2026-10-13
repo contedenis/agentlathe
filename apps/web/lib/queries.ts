@@ -1,14 +1,20 @@
 import {
+  agentCriteria,
   agentMcpTools,
   agentRuns,
   agentSkills,
   agentSubAgents,
   agents,
   agentTools,
+  agentVersions,
   db,
   fixDrafts,
   isUuid,
   mcpServers,
+  type ReviewedVerdict,
+  type RunEvaluationSkipReason,
+  type RunEvaluationStatus,
+  runEvaluations,
   runTranscripts,
   SECRET_ENV_PREFIX,
   skills,
@@ -16,16 +22,20 @@ import {
 } from "@agentlathe/db";
 import {
   and,
+  asc,
   count,
   desc,
   eq,
   gte,
   ilike,
   inArray,
+  ne,
   or,
+  type SQL,
   sql,
 } from "drizzle-orm";
 import { runDay } from "./queries-metrics";
+import type { EvaluationFilter } from "./run-evaluation-filter";
 
 export function listAgents() {
   return db.select().from(agents).orderBy(desc(agents.createdAt));
@@ -102,25 +112,67 @@ const openDraftCount = sql<number>`(
   where ${fixDrafts.runId} = ${agentRuns.id} and ${fixDrafts.status} = 'open'
 )::int`;
 
+const effectiveVerdict = sql`coalesce(${runEvaluations.reviewedVerdict}, ${runEvaluations.status})`;
+const unreviewedNeedsReview = sql`${runEvaluations.status} = 'needs_review' and ${runEvaluations.reviewedVerdict} is null`;
+
+const countedVerdict = sql`${agentCriteria.isActive} and ${runEvaluations.questionSnapshot} = ${agentCriteria.question}`;
+
+function evaluationCount(condition?: SQL) {
+  return sql<number>`(
+    select count(*) from ${runEvaluations}
+    join ${agentCriteria} on ${agentCriteria.id} = ${runEvaluations.criterionId}
+    where ${runEvaluations.runId} = ${agentRuns.id} and ${countedVerdict}${condition ? sql` and ${condition}` : sql``}
+  )::int`;
+}
+
+function hasCountedEvaluation(condition: SQL) {
+  return sql`exists (
+    select 1 from ${runEvaluations}
+    join ${agentCriteria} on ${agentCriteria.id} = ${runEvaluations.criterionId}
+    where ${runEvaluations.runId} = ${agentRuns.id} and ${countedVerdict} and ${condition}
+  )`;
+}
+
+const evaluationFilterCondition: Record<EvaluationFilter, SQL> = {
+  needs_review: hasCountedEvaluation(unreviewedNeedsReview),
+  failed: hasCountedEvaluation(sql`${effectiveVerdict} = 'fail'`),
+  not_evaluated: sql`exists (
+    select 1 from ${runTranscripts} where ${runTranscripts.runId} = ${agentRuns.id}
+  ) and exists (
+    select 1 from ${agentCriteria}
+    where ${agentCriteria.agentId} = ${agentRuns.agentId} and ${agentCriteria.isActive}
+  ) and not exists (
+    select 1 from ${runEvaluations}
+    join ${agentCriteria} on ${agentCriteria.id} = ${runEvaluations.criterionId}
+    where ${runEvaluations.runId} = ${agentRuns.id} and ${countedVerdict}
+  )`,
+};
+
 export async function listRunsPage({
   q,
   source,
+  evaluation,
   limit,
   offset,
 }: {
   q: string;
   source?: string;
+  evaluation?: EvaluationFilter;
   limit: number;
   offset: number;
 }) {
   const query = q.slice(0, 100);
   const escaped = query.replace(/[\\%_]/g, "\\$&");
-  const filter = and(
+  const baseFilter = and(
     query ? ilike(agents.name, `%${escaped}%`) : undefined,
     source ? eq(agentRuns.source, source) : undefined,
   );
+  const filter = and(
+    baseFilter,
+    evaluation ? evaluationFilterCondition[evaluation] : undefined,
+  );
 
-  const [rows, totals] = await Promise.all([
+  const [rows, totals, [needsReview]] = await Promise.all([
     db
       .select({
         id: agentRuns.id,
@@ -131,6 +183,19 @@ export async function listRunsPage({
         agentId: agents.id,
         agentName: agents.name,
         openDrafts: openDraftCount,
+        evaluationTotal: evaluationCount(),
+        evaluationFailed: evaluationCount(sql`${effectiveVerdict} = 'fail'`),
+        evaluationNeedsReview: evaluationCount(unreviewedNeedsReview),
+        evaluationClear: evaluationCount(
+          sql`${effectiveVerdict} in ('pass', 'not_applicable')`,
+        ),
+        evaluationPassed: evaluationCount(sql`${effectiveVerdict} = 'pass'`),
+        evaluationErrors: evaluationCount(
+          sql`${runEvaluations.status} = 'error'`,
+        ),
+        evaluationSkipped: evaluationCount(
+          sql`${runEvaluations.status} = 'skipped'`,
+        ),
       })
       .from(agentRuns)
       .innerJoin(agents, eq(agentRuns.agentId, agents.id))
@@ -143,10 +208,32 @@ export async function listRunsPage({
       .from(agentRuns)
       .innerJoin(agents, eq(agentRuns.agentId, agents.id))
       .where(filter),
+    db
+      .select({ value: count() })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+      .where(and(baseFilter, evaluationFilterCondition.needs_review)),
   ]);
 
-  return { rows, total: totals[0]?.value ?? 0 };
+  return {
+    rows,
+    total: totals[0]?.value ?? 0,
+    needsReviewTotal: needsReview?.value ?? 0,
+  };
 }
+
+export type RunEvaluationView = {
+  id: string;
+  criterionId: string;
+  questionSnapshot: string;
+  currentQuestion: string;
+  criterionActive: boolean;
+  status: RunEvaluationStatus;
+  pPass: number | null;
+  skipReason: RunEvaluationSkipReason | null;
+  error: string | null;
+  reviewedVerdict: ReviewedVerdict | null;
+};
 
 export async function getRunForReview(id: string) {
   if (!isUuid(id)) return undefined;
@@ -167,23 +254,64 @@ export async function getRunForReview(id: string) {
       createdAt: agentRuns.createdAt,
       agentId: agents.id,
       agentName: agents.name,
+      versionHash: agentVersions.hash,
+      versionSnapshot: agentVersions.snapshot,
       input: runTranscripts.input,
       output: runTranscripts.output,
+      hasTranscript: sql<boolean>`${runTranscripts.runId} is not null`,
     })
     .from(agentRuns)
     .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+    .leftJoin(agentVersions, eq(agentRuns.agentVersionId, agentVersions.id))
     .leftJoin(runTranscripts, eq(runTranscripts.runId, agentRuns.id))
     .where(eq(agentRuns.id, id))
     .limit(1);
   if (!row) return undefined;
 
-  const drafts = await db
-    .select()
-    .from(fixDrafts)
-    .where(eq(fixDrafts.runId, id))
-    .orderBy(fixDrafts.createdAt);
+  const [drafts, evaluationRows, [activeCriterion]] = await Promise.all([
+    db
+      .select()
+      .from(fixDrafts)
+      .where(eq(fixDrafts.runId, id))
+      .orderBy(fixDrafts.createdAt),
+    db
+      .select({
+        id: runEvaluations.id,
+        criterionId: runEvaluations.criterionId,
+        questionSnapshot: runEvaluations.questionSnapshot,
+        currentQuestion: agentCriteria.question,
+        criterionActive: agentCriteria.isActive,
+        status: runEvaluations.status,
+        pPass: runEvaluations.pPass,
+        skipReason: runEvaluations.skipReason,
+        error: runEvaluations.error,
+        reviewedVerdict: runEvaluations.reviewedVerdict,
+      })
+      .from(runEvaluations)
+      .innerJoin(
+        agentCriteria,
+        eq(agentCriteria.id, runEvaluations.criterionId),
+      )
+      .where(eq(runEvaluations.runId, id))
+      .orderBy(asc(agentCriteria.createdAt), asc(agentCriteria.id)),
+    db
+      .select({ id: agentCriteria.id })
+      .from(agentCriteria)
+      .where(
+        and(
+          eq(agentCriteria.agentId, row.agentId),
+          eq(agentCriteria.isActive, true),
+        ),
+      )
+      .limit(1),
+  ]);
 
-  return { ...row, drafts };
+  return {
+    ...row,
+    drafts,
+    evaluations: evaluationRows as RunEvaluationView[],
+    hasActiveCriteria: Boolean(activeCriterion),
+  };
 }
 
 type Warning = {
@@ -460,4 +588,172 @@ export async function getDashboardData() {
       daily: activityDaily,
     },
   };
+}
+
+const CRITERIA_STATS_DAYS = 30;
+
+export type AgentCriterion = {
+  id: string;
+  question: string;
+  passDescription: string | null;
+  failDescription: string | null;
+  appliesWhen: string | null;
+  failBelow: number;
+  passAbove: number;
+  isActive: boolean;
+  sourceFixDraftId: string | null;
+  sourceRunId: string | null;
+  stats: {
+    pass: number;
+    fail: number;
+    needsReview: number;
+    passRate: number | null;
+  };
+};
+
+export type AgentCriteriaData = {
+  criteria: AgentCriterion[];
+  lastEvaluationError: { message: string; at: Date } | null;
+};
+
+export async function getAgentCriteria(
+  agentId: string,
+): Promise<AgentCriteriaData> {
+  if (!isUuid(agentId)) return { criteria: [], lastEvaluationError: null };
+  const since = new Date(
+    Date.now() - CRITERIA_STATS_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const judged = sql`coalesce(${runEvaluations.reviewedVerdict}, ${runEvaluations.status})`;
+
+  const [rows, statRows, [latest]] = await Promise.all([
+    db
+      .select({
+        id: agentCriteria.id,
+        question: agentCriteria.question,
+        passDescription: agentCriteria.passDescription,
+        failDescription: agentCriteria.failDescription,
+        appliesWhen: agentCriteria.appliesWhen,
+        failBelow: agentCriteria.failBelow,
+        passAbove: agentCriteria.passAbove,
+        isActive: agentCriteria.isActive,
+        sourceFixDraftId: agentCriteria.sourceFixDraftId,
+        sourceRunId: fixDrafts.runId,
+      })
+      .from(agentCriteria)
+      .leftJoin(fixDrafts, eq(fixDrafts.id, agentCriteria.sourceFixDraftId))
+      .where(eq(agentCriteria.agentId, agentId))
+      .orderBy(asc(agentCriteria.createdAt)),
+    db
+      .select({
+        criterionId: runEvaluations.criterionId,
+        pass: sql<number>`(count(*) filter (where ${judged} = 'pass'))::int`,
+        fail: sql<number>`(count(*) filter (where ${judged} = 'fail'))::int`,
+        needsReview: sql<number>`(count(*) filter (where ${runEvaluations.status} = 'needs_review' and ${runEvaluations.reviewedVerdict} is null))::int`,
+      })
+      .from(runEvaluations)
+      .innerJoin(
+        agentCriteria,
+        eq(agentCriteria.id, runEvaluations.criterionId),
+      )
+      .innerJoin(agentRuns, eq(agentRuns.id, runEvaluations.runId))
+      .where(
+        and(
+          eq(agentCriteria.agentId, agentId),
+          eq(runEvaluations.questionSnapshot, agentCriteria.question),
+          gte(agentRuns.createdAt, since),
+        ),
+      )
+      .groupBy(runEvaluations.criterionId),
+    db
+      .select({
+        status: runEvaluations.status,
+        error: runEvaluations.error,
+        createdAt: runEvaluations.createdAt,
+      })
+      .from(runEvaluations)
+      .innerJoin(
+        agentCriteria,
+        eq(agentCriteria.id, runEvaluations.criterionId),
+      )
+      .where(
+        and(
+          eq(agentCriteria.agentId, agentId),
+          eq(agentCriteria.isActive, true),
+        ),
+      )
+      .orderBy(desc(runEvaluations.createdAt))
+      .limit(1),
+  ]);
+
+  const statsById = new Map(statRows.map((row) => [row.criterionId, row]));
+  return {
+    criteria: rows.map((row) => {
+      const stats = statsById.get(row.id);
+      const pass = stats?.pass ?? 0;
+      const fail = stats?.fail ?? 0;
+      return {
+        ...row,
+        stats: {
+          pass,
+          fail,
+          needsReview: stats?.needsReview ?? 0,
+          passRate: pass + fail > 0 ? pass / (pass + fail) : null,
+        },
+      };
+    }),
+    lastEvaluationError:
+      latest?.status === "error"
+        ? { message: latest.error ?? "Unknown error.", at: latest.createdAt }
+        : null,
+  };
+}
+
+export type CriteriaCopySource = {
+  agentId: string;
+  agentName: string;
+  criteria: Pick<
+    AgentCriterion,
+    | "id"
+    | "question"
+    | "passDescription"
+    | "failDescription"
+    | "appliesWhen"
+    | "failBelow"
+    | "passAbove"
+  >[];
+};
+
+export async function getCriteriaCopySources(
+  excludeAgentId: string,
+): Promise<CriteriaCopySource[]> {
+  if (!isUuid(excludeAgentId)) return [];
+  const rows = await db
+    .select({
+      agentId: agents.id,
+      agentName: agents.name,
+      id: agentCriteria.id,
+      question: agentCriteria.question,
+      passDescription: agentCriteria.passDescription,
+      failDescription: agentCriteria.failDescription,
+      appliesWhen: agentCriteria.appliesWhen,
+      failBelow: agentCriteria.failBelow,
+      passAbove: agentCriteria.passAbove,
+    })
+    .from(agentCriteria)
+    .innerJoin(agents, eq(agents.id, agentCriteria.agentId))
+    .where(
+      and(
+        ne(agentCriteria.agentId, excludeAgentId),
+        eq(agentCriteria.isActive, true),
+      ),
+    )
+    .orderBy(asc(agents.name), asc(agentCriteria.createdAt));
+
+  const byAgent = new Map<string, CriteriaCopySource>();
+  for (const { agentId, agentName, ...criterion } of rows) {
+    const source = byAgent.get(agentId) ?? { agentId, agentName, criteria: [] };
+    source.criteria.push(criterion);
+    byAgent.set(agentId, source);
+  }
+  return [...byAgent.values()];
 }

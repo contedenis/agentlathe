@@ -46,7 +46,9 @@ function FixDraftForm({
   const [category, setCategory] = useState<
     (typeof FIX_DRAFT_CATEGORIES)[number]
   >(editing?.category ?? "prompt");
-  const [rationale, setRationale] = useState(editing?.rationale ?? "");
+  const [rationale, setRationale] = useState(
+    editing?.rationale ?? target?.rationale ?? "",
+  );
   const [proposedValue, setProposedValue] = useState(
     editing?.proposedValue ?? "",
   );

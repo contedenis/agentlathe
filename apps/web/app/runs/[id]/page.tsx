@@ -6,10 +6,12 @@ import { LIST_SHELL_CLASS } from "@/components/list-search";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { RunWorkspace } from "@/components/run-workspace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { VersionConfigDialog } from "@/components/version-dialogs";
 import { toFixDrafts } from "@/lib/fix-drafts";
 import { getRunForReview } from "@/lib/queries";
 import { sourceLabel } from "@/lib/run-sources";
 import { toTranscriptMessages } from "@/lib/transcript";
+import { readSnapshot } from "@/lib/version-diff";
 
 export default async function RunDetailPage({
   params,
@@ -59,6 +61,15 @@ export default async function RunDetailPage({
           <span>
             {run.steps} {run.steps === 1 ? "step" : "steps"}
           </span>
+          {run.versionHash && (
+            <>
+              <span aria-hidden>·</span>
+              <VersionConfigDialog
+                shortHash={run.versionHash.slice(0, 8)}
+                config={readSnapshot(run.versionSnapshot)}
+              />
+            </>
+          )}
           {tokens > 0 && (
             <>
               <span aria-hidden>·</span>
@@ -95,9 +106,15 @@ export default async function RunDetailPage({
       )}
 
       <RunWorkspace
+        agentId={run.agentId}
+        runId={id}
+        source={run.source}
         draftsEndpoint={`/api/runs/${id}/fix-drafts`}
         messages={messages}
         initialFixDrafts={drafts}
+        evaluations={run.evaluations}
+        hasActiveCriteria={run.hasActiveCriteria}
+        hasTranscript={run.hasTranscript}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import { ActiveBadge } from "@/components/active-badge";
 import { AgentPlayground } from "@/components/agent-playground";
 import { AgentWarningsBanner } from "@/components/agent-warnings-banner";
 import { BreadcrumbTitle } from "@/components/breadcrumb-title";
+import { CriteriaPanel } from "@/components/criteria-panel";
 import { DeleteResourceButton } from "@/components/delete-resource-button";
 import { PageHeader } from "@/components/page-header";
 import { ToggleActiveButton } from "@/components/toggle-active-button";
@@ -11,7 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getAgentDetail } from "@/lib/queries";
+import {
+  getAgentCriteria,
+  getAgentDetail,
+  getCriteriaCopySources,
+} from "@/lib/queries";
 
 function RefList({
   items,
@@ -41,7 +46,11 @@ export default async function AgentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const agent = await getAgentDetail(id);
+  const [agent, criteriaData, copySources] = await Promise.all([
+    getAgentDetail(id),
+    getAgentCriteria(id),
+    getCriteriaCopySources(id),
+  ]);
   if (!agent) notFound();
 
   return (
@@ -78,9 +87,10 @@ export default async function AgentDetailPage({
       <div className="flex flex-col gap-4 lg:h-[75vh] lg:flex-row">
         <div className="flex flex-col gap-3 lg:w-96 lg:shrink-0 lg:overflow-y-auto">
           <Tabs defaultValue="resumen">
-            <TabsList>
+            <TabsList className="w-full">
               <TabsTrigger value="resumen">Summary</TabsTrigger>
               <TabsTrigger value="tools">Tools</TabsTrigger>
+              <TabsTrigger value="evaluation">Evaluation</TabsTrigger>
             </TabsList>
 
             <TabsContent value="resumen" className="mt-3">
@@ -100,6 +110,12 @@ export default async function AgentDetailPage({
                       {agent.recordTraffic
                         ? "Recorded with its messages"
                         : "Not recorded"}
+                    </dd>
+                    <dt className="text-muted-foreground">Evaluation</dt>
+                    <dd>
+                      {agent.autoEvaluate
+                        ? "New runs judged automatically"
+                        : "Only when re-evaluated"}
                     </dd>
                     <dt className="text-muted-foreground">System prompt</dt>
                     <dd>
@@ -174,6 +190,17 @@ export default async function AgentDetailPage({
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="evaluation" className="mt-3">
+              <CriteriaPanel
+                agentId={id}
+                autoEvaluate={agent.autoEvaluate}
+                recordTraffic={agent.recordTraffic}
+                criteria={criteriaData.criteria}
+                lastEvaluationError={criteriaData.lastEvaluationError}
+                copySources={copySources}
+              />
             </TabsContent>
           </Tabs>
         </div>

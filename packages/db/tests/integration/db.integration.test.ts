@@ -411,5 +411,37 @@ describe("db integration (requires Docker)", () => {
         .where(eq(schema.agents.name, "General orchestrator"));
       expect(markerRows).toHaveLength(0);
     });
+
+    it("seeds the demo agents with their example criteria once the collision is gone", async () => {
+      await db
+        .delete(schema.agents)
+        .where(eq(schema.agents.name, "Data assistant"));
+
+      const { seedDemo } = await import("../../src/seed-demo");
+      await seedDemo();
+
+      const criteria = await db
+        .select({
+          agent: schema.agents.name,
+          appliesWhen: schema.agentCriteria.appliesWhen,
+          passDescription: schema.agentCriteria.passDescription,
+          failDescription: schema.agentCriteria.failDescription,
+        })
+        .from(schema.agentCriteria)
+        .innerJoin(
+          schema.agents,
+          eq(schema.agents.id, schema.agentCriteria.agentId),
+        );
+
+      expect(criteria.map((row) => row.agent).sort()).toEqual([
+        "Data assistant",
+        "Support coordinator",
+        "Support coordinator",
+      ]);
+      expect(
+        criteria.every((row) => row.passDescription && row.failDescription),
+      ).toBe(true);
+      expect(criteria.filter((row) => row.appliesWhen)).toHaveLength(1);
+    });
   });
 });

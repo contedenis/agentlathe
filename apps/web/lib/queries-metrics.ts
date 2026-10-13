@@ -1,4 +1,5 @@
 import {
+  agentCriteria,
   agentMcpTools,
   agentRunCalls,
   agentRuns,
@@ -6,24 +7,28 @@ import {
   agentSubAgents,
   agents,
   agentTools,
+  agentVersions,
   db,
   getSettings,
   httpToolName,
   isUuid,
   mcpServers,
   mcpToolName,
+  runEvaluations,
   skills,
   subAgentToolName,
   tools,
 } from "@agentlathe/db";
-import { and, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import {
+  assembleAgentEvaluation,
   assembleAgentUsage,
   assembleCapabilities,
   buildDailySeries,
   type CapabilityUsage,
   type ConfiguredCapability,
   reconcileParents,
+  summarizeEvaluation,
   toDate,
 } from "./metrics-assembly";
 import { type MetricsRange, previousRangeStart } from "./metrics-range";
@@ -172,6 +177,84 @@ const runSpanSelect = (where: SQL | undefined) =>
     .from(agentRuns)
     .where(where);
 
+const judgedVerdict = sql`coalesce(${runEvaluations.reviewedVerdict}, ${runEvaluations.status})`;
+const unreviewed = sql`${runEvaluations.status} = 'needs_review' and ${runEvaluations.reviewedVerdict} is null`;
+const countWhere = (condition: SQL) =>
+  sql<number>`(count(*) filter (where ${condition}))::int`;
+
+const currentVerdicts = (runWhere: SQL | undefined) =>
+  and(
+    runWhere,
+    eq(agentCriteria.isActive, true),
+    eq(runEvaluations.questionSnapshot, agentCriteria.question),
+  );
+
+const evaluationAggregateSelect = (runWhere: SQL | undefined) =>
+  db
+    .select({
+      criterionId: runEvaluations.criterionId,
+      versionId: agentRuns.agentVersionId,
+      day: runDay,
+      pass: countWhere(sql`${judgedVerdict} = 'pass'`),
+      fail: countWhere(sql`${judgedVerdict} = 'fail'`),
+      needsReview: countWhere(unreviewed),
+      judgedReviewed: countWhere(
+        sql`${runEvaluations.reviewedVerdict} is not null and ${runEvaluations.status} in ('pass', 'fail')`,
+      ),
+      agreed: countWhere(
+        sql`${runEvaluations.reviewedVerdict} is not null and ${runEvaluations.status} = ${runEvaluations.reviewedVerdict}`,
+      ),
+      reviewedAsPass: countWhere(
+        sql`${runEvaluations.status} = 'needs_review' and ${runEvaluations.reviewedVerdict} = 'pass'`,
+      ),
+      reviewedAsFail: countWhere(
+        sql`${runEvaluations.status} = 'needs_review' and ${runEvaluations.reviewedVerdict} = 'fail'`,
+      ),
+    })
+    .from(runEvaluations)
+    .innerJoin(agentRuns, eq(runEvaluations.runId, agentRuns.id))
+    .innerJoin(agentCriteria, eq(runEvaluations.criterionId, agentCriteria.id))
+    .where(currentVerdicts(runWhere))
+    .groupBy(runEvaluations.criterionId, agentRuns.agentVersionId, sql`3`);
+
+const evaluationByAgentSelect = (runWhere: SQL | undefined) =>
+  db
+    .select({
+      agentId: agentRuns.agentId,
+      pass: countWhere(sql`${judgedVerdict} = 'pass'`),
+      fail: countWhere(sql`${judgedVerdict} = 'fail'`),
+      needsReview: countWhere(unreviewed),
+    })
+    .from(runEvaluations)
+    .innerJoin(agentRuns, eq(runEvaluations.runId, agentRuns.id))
+    .innerJoin(agentCriteria, eq(runEvaluations.criterionId, agentCriteria.id))
+    .where(currentVerdicts(runWhere))
+    .groupBy(agentRuns.agentId);
+
+const awaitingReviewRunsSelect = () =>
+  db
+    .select({
+      runs: sql<number>`count(distinct ${runEvaluations.runId})::int`,
+    })
+    .from(runEvaluations)
+    .innerJoin(agentCriteria, eq(runEvaluations.criterionId, agentCriteria.id))
+    .where(currentVerdicts(unreviewed));
+
+const agentVersionSpansSelect = (runWhere: SQL | undefined) =>
+  db
+    .select({
+      id: agentVersions.id,
+      hash: agentVersions.hash,
+      createdAt: agentVersions.createdAt,
+      snapshot: agentVersions.snapshot,
+      firstRunAt: sql<string>`to_char(min(${agentRuns.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+      lastRunAt: sql<string>`to_char(max(${agentRuns.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+    })
+    .from(agentRuns)
+    .innerJoin(agentVersions, eq(agentRuns.agentVersionId, agentVersions.id))
+    .where(runWhere)
+    .groupBy(agentVersions.id, agentVersions.hash, agentVersions.createdAt);
+
 export async function getMetricsData(range: MetricsRange) {
   const appSettings = await getSettings();
   const previousSince = previousRangeStart(range);
@@ -191,6 +274,8 @@ export async function getMetricsData(range: MetricsRange) {
     configured,
     used,
     span,
+    evaluationRows,
+    awaitingReview,
   ] = await Promise.all([
     runTotalsSelect(inWindow),
 
@@ -250,6 +335,10 @@ export async function getMetricsData(range: MetricsRange) {
       .where(inWindow),
 
     runSpanSelect(undefined),
+
+    evaluationByAgentSelect(inWindow),
+
+    awaitingReviewRunsSelect(),
   ]);
 
   const usage = assembleAgentUsage({
@@ -273,6 +362,10 @@ export async function getMetricsData(range: MetricsRange) {
     range,
     firstRunAt: toDate(span[0]?.first),
     lastRunAt: toDate(span[0]?.last),
+    evaluation: {
+      ...summarizeEvaluation(evaluationRows),
+      awaitingReviewRuns: awaitingReview[0]?.runs ?? 0,
+    },
   };
 }
 
@@ -318,6 +411,9 @@ export async function getAgentMetricsData(
     recentErrors,
     perDay,
     span,
+    criteria,
+    evaluationRows,
+    versionSpans,
   ] = await Promise.all([
     getSettings(),
 
@@ -392,6 +488,20 @@ export async function getAgentMetricsData(
       .groupBy(sql`1`),
 
     runSpanSelect(ofAgent),
+
+    db
+      .select({
+        id: agentCriteria.id,
+        question: agentCriteria.question,
+        isActive: agentCriteria.isActive,
+      })
+      .from(agentCriteria)
+      .where(eq(agentCriteria.agentId, agentId))
+      .orderBy(asc(agentCriteria.createdAt)),
+
+    evaluationAggregateSelect(inWindow),
+
+    agentVersionSpansSelect(inWindow),
   ]);
 
   const capabilities: CapabilityUsage[] = assembleCapabilities(
@@ -403,6 +513,16 @@ export async function getAgentMetricsData(
     range.days,
   );
   const parents = reconcileParents(parentLinks, parentCalls);
+  const evaluation = assembleAgentEvaluation({
+    criteria,
+    rows: evaluationRows,
+    versions: versionSpans.flatMap((row) => {
+      const firstRunAt = toDate(row.firstRunAt);
+      const lastRunAt = toDate(row.lastRunAt);
+      return firstRunAt && lastRunAt ? [{ ...row, firstRunAt, lastRunAt }] : [];
+    }),
+    days: range.days,
+  });
 
   return {
     agent,
@@ -413,6 +533,7 @@ export async function getAgentMetricsData(
     bySource,
     capabilities,
     parents,
+    evaluation,
     recentErrors,
     series,
     previousRuns,

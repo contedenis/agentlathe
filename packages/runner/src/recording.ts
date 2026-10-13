@@ -1,5 +1,7 @@
 import {
   type AgentRunSource,
+  getSettings,
+  isTrackingEnabled,
   recordAgentRun,
   saveRunTranscript,
 } from "@agentlathe/db";
@@ -13,6 +15,7 @@ import {
 } from "ai";
 import type { AgentRow } from "./loaders";
 import type { ToolKind } from "./tools";
+import { resolveAgentVersion } from "./versions";
 
 export type AgentRunCallRecord = {
   kind: ToolKind;
@@ -191,23 +194,38 @@ export type RunRecorder = {
   runId: () => string | null;
 };
 
-export function createRunRecorder(run: {
+export type RunRecorderOptions = {
   agent: AgentRow;
   source: AgentRunSource;
   threadId?: string | null;
-}): RunRecorder {
-  const { agent, source, threadId = null } = run;
+  onTranscriptSaved?: (runId: string) => void;
+};
+
+export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
+  const { agent, source, threadId = null, onTranscriptSaved } = run;
   const startedAt = Date.now();
   let recorded: string | null = null;
+  const version = getSettings()
+    .then((appSettings) =>
+      isTrackingEnabled(source, appSettings)
+        ? resolveAgentVersion(agent.id)
+        : null,
+    )
+    .catch((err) => {
+      console.error("resolveAgentVersion failed", err);
+      return null;
+    });
 
   return {
     record: async ({ stats, durationMs, error }) => {
+      const elapsedMs = durationMs ?? Date.now() - startedAt;
       recorded = await recordAgentRun({
         agentId: agent.id,
+        agentVersionId: await version,
         source,
         threadId,
         model: agent.model,
-        durationMs: durationMs ?? Date.now() - startedAt,
+        durationMs: elapsedMs,
         ...(stats ?? {}),
         status: error ? "error" : "ok",
         error: error
@@ -221,7 +239,13 @@ export function createRunRecorder(run: {
     attachTranscript: async (input, output) => {
       if (!recorded) return;
       if (source !== "dashboard" && !agent.recordTraffic) return;
-      await saveRunTranscript(recorded, input, output);
+      const runId = recorded;
+      if (!(await saveRunTranscript(runId, input, output))) return;
+      try {
+        onTranscriptSaved?.(runId);
+      } catch (err) {
+        console.error("onTranscriptSaved failed", err);
+      }
     },
     runId: () => recorded,
   };

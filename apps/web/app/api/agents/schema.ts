@@ -32,6 +32,7 @@ const base = {
   maxSteps: z.number().int().positive().max(200).optional(),
   isActive: z.boolean().optional(),
   recordTraffic: z.boolean().optional(),
+  autoEvaluate: z.boolean().optional(),
   skillIds: z.array(uuidSchema).optional(),
   toolIds: z.array(uuidSchema).optional(),
   subAgentIds: z.array(uuidSchema).optional(),

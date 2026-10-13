@@ -1,5 +1,4 @@
 import {
-  createRunRecorder,
   loadActiveAgent,
   safeValidateUIMessages,
   streamAgentForUI,
@@ -7,6 +6,7 @@ import {
 } from "@agentlathe/runner";
 import { z } from "zod";
 import { isUuid, parseBody } from "@/lib/api-helpers";
+import { createRecorder } from "@/lib/run-recorder";
 
 const chatBodySchema = z.object({
   messages: z.array(z.unknown()),
@@ -43,16 +43,11 @@ export async function POST(
 
   // No thread row to look up: the id only groups runs and the client hands it back.
   const threadId = parsed.data.threadId ?? crypto.randomUUID();
-  const recorder = createRunRecorder({ agent, source: "dashboard", threadId });
+  const recorder = createRecorder({ agent, source: "dashboard", threadId });
 
   try {
     const response = await streamAgentForUI(agent, messages, {
-      onFinish: async ({ messages: turnMessages }) => {
-        await recorder.attachTranscript(
-          parsed.data.messages,
-          (turnMessages as UIMessage[]).slice(parsed.data.messages.length),
-        );
-      },
+      onTranscript: (input, output) => recorder.attachTranscript(input, output),
       abortSignal: req.signal,
       onRunEnd: (outcome) => recorder.record(outcome),
     });

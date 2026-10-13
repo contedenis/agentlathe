@@ -2,6 +2,7 @@ import { lt } from "drizzle-orm";
 import { db } from "./client";
 import {
   DEFAULT_AGENT_RUN_TTL_DAYS,
+  DEFAULT_JUDGE_MODEL,
   DEFAULT_TRACK_DASHBOARD_RUNS,
   DEFAULT_TRACK_MCP_RUNS,
   DEFAULT_TRACK_V1_RUNS,
@@ -25,6 +26,7 @@ export type TrackingFlags = {
 export type AppSettings = TrackingFlags & {
   agentRunTtlDays: number;
   transcriptTtlDays: number;
+  judgeModel: string;
 };
 
 const TRACK_COLUMN = {
@@ -33,7 +35,7 @@ const TRACK_COLUMN = {
   mcp: "trackMcpRuns",
 } as const satisfies Record<AgentRunSource, keyof TrackingFlags>;
 
-function isTrackingEnabled(
+export function isTrackingEnabled(
   source: AgentRunSource,
   flags: TrackingFlags,
 ): boolean {
@@ -46,6 +48,7 @@ const DEFAULTS: AppSettings = {
   trackMcpRuns: DEFAULT_TRACK_MCP_RUNS,
   agentRunTtlDays: DEFAULT_AGENT_RUN_TTL_DAYS,
   transcriptTtlDays: DEFAULT_TRANSCRIPT_TTL_DAYS,
+  judgeModel: DEFAULT_JUDGE_MODEL,
 };
 
 export async function getSettings(): Promise<AppSettings> {
@@ -56,6 +59,7 @@ export async function getSettings(): Promise<AppSettings> {
       trackMcpRuns: settings.trackMcpRuns,
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
+      judgeModel: settings.judgeModel,
     })
     .from(settings)
     .limit(1);
@@ -78,6 +82,7 @@ export async function setSettings(
       trackMcpRuns: settings.trackMcpRuns,
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
+      judgeModel: settings.judgeModel,
     });
   return row;
 }
@@ -91,6 +96,7 @@ export type AgentRunCall = {
 
 export type AgentRunRecord = {
   agentId: string;
+  agentVersionId?: string | null;
   source: AgentRunSource;
   threadId?: string | null;
   durationMs: number;
@@ -152,11 +158,13 @@ export async function saveRunTranscript(
   runId: string,
   input: unknown,
   output: unknown,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await db.insert(runTranscripts).values({ runId, input, output });
+    return true;
   } catch (err) {
     console.error("saveRunTranscript failed", err);
+    return false;
   }
 }
 

@@ -61,7 +61,7 @@ The [`Dockerfile`](../Dockerfile) is a multi-stage build with two consumable tar
 
 **Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, and transcripts **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
 
-**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, and MCP approval elicitations that block on a human. A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
+**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, and run evaluations that finish in the background after the response has gone out. A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
 
 ## Binding and CSRF
 

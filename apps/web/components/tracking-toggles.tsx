@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_JUDGE_MODEL } from "@agentlathe/db/constants";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -14,6 +15,7 @@ export type AppSettings = {
   trackMcpRuns: boolean;
   agentRunTtlDays: number;
   transcriptTtlDays: number;
+  judgeModel: string;
 };
 
 export const SOURCES = [
@@ -26,13 +28,20 @@ export const SOURCES = [
   { key: "trackMcpRuns", label: "MCP", hint: "Agents exposed as MCP." },
 ] as const;
 
-export function TrackingToggles({ initial }: { initial: AppSettings }) {
+export function TrackingToggles({
+  initial,
+  judgeHost,
+}: {
+  initial: AppSettings;
+  judgeHost: string;
+}) {
   const router = useRouter();
   const [settings, setSettings] = useState(initial);
   const [ttlText, setTtlText] = useState(String(initial.agentRunTtlDays));
   const [transcriptTtlText, setTranscriptTtlText] = useState(
     String(initial.transcriptTtlDays),
   );
+  const [judgeModelText, setJudgeModelText] = useState(initial.judgeModel);
   const [pending, startTransition] = useTransition();
 
   async function save(values: Partial<AppSettings>) {
@@ -48,6 +57,7 @@ export function TrackingToggles({ initial }: { initial: AppSettings }) {
       setSettings(previous);
       setTtlText(String(previous.agentRunTtlDays));
       setTranscriptTtlText(String(previous.transcriptTtlDays));
+      setJudgeModelText(previous.judgeModel);
       toast.error(
         err instanceof Error ? err.message : "Could not save the change.",
       );
@@ -74,6 +84,18 @@ export function TrackingToggles({ initial }: { initial: AppSettings }) {
     }
     if (parsed === settings.transcriptTtlDays) return;
     void save({ transcriptTtlDays: parsed });
+  }
+
+  function commitJudgeModel() {
+    const trimmed = judgeModelText.trim();
+    if (trimmed === "") {
+      setJudgeModelText(settings.judgeModel);
+      toast.error("The judge model cannot be empty.");
+      return;
+    }
+    setJudgeModelText(trimmed);
+    if (trimmed === settings.judgeModel) return;
+    void save({ judgeModel: trimmed });
   }
 
   return (
@@ -143,6 +165,26 @@ export function TrackingToggles({ initial }: { initial: AppSettings }) {
           {settings.transcriptTtlDays === 0
             ? "0 = no limit, nothing is ever deleted."
             : `Transcripts older than ${settings.transcriptTtlDays} days are deleted automatically.`}
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t pt-4">
+        <Label htmlFor="judgeModel">Judge model</Label>
+        <Input
+          id="judgeModel"
+          value={judgeModelText}
+          placeholder={DEFAULT_JUDGE_MODEL}
+          disabled={pending}
+          onChange={(e) => setJudgeModelText(e.target.value)}
+          onBlur={commitJudgeModel}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          className="font-mono text-xs"
+        />
+        <span className="text-xs text-muted-foreground">
+          Jev model used to judge runs against criteria, served by{" "}
+          <span className="font-mono">{judgeHost}</span>.
         </span>
       </div>
     </div>

@@ -27,7 +27,13 @@ const SETTING_KEY_TO_SOURCE: Record<
   trackMcpRuns: "mcp",
 };
 
-export function TrackingSettings({ settings }: { settings: AppSettings }) {
+export function TrackingSettings({
+  settings,
+  judgeHost,
+}: {
+  settings: AppSettings;
+  judgeHost: string;
+}) {
   const active = SOURCES.filter((source) => settings[source.key]);
 
   return (
@@ -66,7 +72,7 @@ export function TrackingSettings({ settings }: { settings: AppSettings }) {
             and for API and MCP calls only on agents that opt in.
           </PopoverDescription>
         </PopoverHeader>
-        <TrackingToggles initial={settings} />
+        <TrackingToggles initial={settings} judgeHost={judgeHost} />
       </PopoverContent>
     </Popover>
   );

@@ -19,7 +19,9 @@ export {
   type AgentRunStats,
   createRunRecorder,
   type RunRecorder,
+  type RunRecorderOptions,
 } from "./recording";
 export { buildAgentRuntime } from "./runtime";
 export { streamAgentForUI } from "./stream-ui";
 export { discoverMcpTools } from "./tools";
+export type { AgentVersionSnapshot } from "./versions";

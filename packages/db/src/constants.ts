@@ -20,6 +20,31 @@ export const FIX_DRAFT_CATEGORIES = [
 
 export const FIX_DRAFT_STATUSES = ["open", "dismissed", "applied"] as const;
 
+export const RUN_EVALUATION_STATUSES = [
+  "pass",
+  "fail",
+  "needs_review",
+  "not_applicable",
+  "skipped",
+  "error",
+] as const;
+export type RunEvaluationStatus = (typeof RUN_EVALUATION_STATUSES)[number];
+
+export const RUN_EVALUATION_SKIP_REASONS = [
+  "too_long",
+  "awaiting_approval",
+] as const;
+export type RunEvaluationSkipReason =
+  (typeof RUN_EVALUATION_SKIP_REASONS)[number];
+
+export const REVIEWED_VERDICTS = ["pass", "fail"] as const;
+export type ReviewedVerdict = (typeof REVIEWED_VERDICTS)[number];
+
+export const DEFAULT_CRITERION_FAIL_BELOW = 0.2;
+export const DEFAULT_CRITERION_PASS_ABOVE = 0.8;
+export const CRITERION_DESCRIPTION_MAX_LENGTH = 2000;
+export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
+
 export const DEFAULT_AGENT_RUN_TTL_DAYS = 90;
 export const MAX_AGENT_RUN_TTL_DAYS = 3650;
 export const DEFAULT_TRANSCRIPT_TTL_DAYS = 14;

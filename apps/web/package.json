@@ -1,6 +1,6 @@
 {
   "name": "@agentlathe/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -32,6 +32,7 @@
     "ai-tokenizer": "^1.0.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "diff": "9.0.0",
     "drizzle-orm": "^0.45.2",
     "geist": "1.7.2",
     "lucide-react": "^1.23.0",

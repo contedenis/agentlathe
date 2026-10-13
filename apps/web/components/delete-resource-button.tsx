@@ -20,11 +20,15 @@ export function DeleteResourceButton({
   resourceLabel,
   redirectTo,
   size = "default",
+  description,
+  subtle = false,
 }: {
   endpoint: string;
   resourceLabel: string;
   redirectTo: string;
   size?: "default" | "sm";
+  description?: string;
+  subtle?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -47,16 +51,25 @@ export function DeleteResourceButton({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="destructive" size={size} />}>
+      <DialogTrigger
+        render={
+          <Button
+            variant={subtle ? "ghost" : "destructive"}
+            size={size}
+            className={
+              subtle ? "text-destructive hover:text-destructive" : undefined
+            }
+          />
+        }
+      >
         Delete
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete {resourceLabel}</DialogTitle>
           <DialogDescription>
-            This deletes the resource and all its relations (cascade). It cannot
-            be undone. If you only want it to stop being used, use "Deactivate"
-            instead.
+            {description ??
+              `This deletes the resource and all its relations (cascade). It cannot be undone. If you only want it to stop being used, use "Deactivate" instead.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

@@ -195,7 +195,7 @@ test.describe("agentlathe e2e flows", () => {
   }) => {
     await page.goto(`/runs/${firstRunId}`);
 
-    await expect(page.getByRole("heading", { name: "Summary" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Summary" })).toBeVisible();
     await expect(page.locator(".is-user").first()).toBeVisible();
     await expect(page.locator(".is-assistant").first()).toBeVisible();
 
@@ -291,5 +291,82 @@ test.describe("agentlathe e2e flows", () => {
       await cleanupRow.locator("td").nth(rejectedIndex).innerText(),
     );
     expect(cleanupRejected).toBeGreaterThan(0);
+  });
+
+  test("evaluates a new run automatically with the real judge", async ({
+    page,
+  }) => {
+    const question =
+      "Did the assistant reply in the same language as the user's last message?";
+
+    await page.goto(`/agents/${agentId}`);
+    await page.getByRole("tab", { name: "Evaluation" }).click();
+    await page.getByRole("button", { name: "Add criterion" }).click();
+    const criterionDialog = page.getByRole("dialog", {
+      name: "Add criterion",
+    });
+    await expect(criterionDialog).toBeVisible();
+    await criterionDialog.getByLabel("Question").fill(question);
+    await criterionDialog
+      .getByLabel("Passes when")
+      .fill("The reply is written in the same language as the user's message.");
+    await criterionDialog
+      .getByLabel("Fails when")
+      .fill("The reply is written in a different language.");
+    await criterionDialog.getByRole("button", { name: "Create" }).click();
+    await expect(page.getByText("Criterion created.")).toBeVisible();
+    await expect(criterionDialog).not.toBeVisible();
+
+    const input = page.getByRole("textbox", {
+      name: "Write a message (Enter sends, Shift+Enter adds a line break)",
+    });
+    await input.fill("Hola, ¿cómo estás hoy? Respondé en una frase corta.");
+    await input.press("Enter");
+
+    await expect(
+      page.locator('[role="log"] .is-assistant').last(),
+    ).not.toBeEmpty({ timeout: MODEL_TIMEOUT });
+    const openRunLink = page.getByRole("link", { name: "Open run" }).last();
+    await expect(openRunLink).toBeVisible({ timeout: MODEL_TIMEOUT });
+    const href = await openRunLink.getAttribute("href");
+    const runId = (href ?? "").split("/").pop() ?? "";
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+
+    await page.goto(`/runs/${runId}`);
+    const card = page.getByRole("tabpanel", { name: /^Evaluation/ });
+    await expect(card).toBeVisible();
+    await expect
+      .poll(
+        async () => {
+          if ((await card.locator("li").count()) > 0) return true;
+          await page.reload();
+          return false;
+        },
+        { timeout: 45_000, intervals: [3_000] },
+      )
+      .toBe(true);
+
+    const verdict = card.locator("li").filter({ hasText: question });
+    await expect(verdict).toBeVisible();
+    await expect(verdict.locator("span").first()).toHaveText(
+      /^(Pass|Fail|Needs review|Not applicable)$/,
+    );
+    await expect(verdict).not.toContainText(/Skipped|Error/);
+
+    const pool = stackPool();
+    try {
+      const { rows } = await pool.query(
+        `select status, judge_model, p_pass, error from run_evaluations where run_id = $1`,
+        [runId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(["pass", "fail", "needs_review", "not_applicable"]).toContain(
+        rows[0].status,
+      );
+      expect(rows[0].judge_model).toMatch(/^typesafe\/jev-1\.13-.+/);
+      expect(rows[0].error).toBeNull();
+    } finally {
+      await pool.end();
+    }
   });
 });

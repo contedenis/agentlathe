@@ -7,20 +7,28 @@ import {
   jsonb,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 import {
   AGENT_RUN_CALL_KINDS,
   AGENT_RUN_SOURCES,
   DEFAULT_AGENT_RUN_TTL_DAYS,
+  DEFAULT_CRITERION_FAIL_BELOW,
+  DEFAULT_CRITERION_PASS_ABOVE,
+  DEFAULT_JUDGE_MODEL,
   DEFAULT_TRACK_DASHBOARD_RUNS,
   DEFAULT_TRACK_MCP_RUNS,
   DEFAULT_TRACK_V1_RUNS,
   DEFAULT_TRANSCRIPT_TTL_DAYS,
   FIX_DRAFT_CATEGORIES,
   FIX_DRAFT_STATUSES,
+  REVIEWED_VERDICTS,
+  RUN_EVALUATION_SKIP_REASONS,
+  RUN_EVALUATION_STATUSES,
 } from "./constants";
 
 export * from "./constants";
@@ -39,6 +47,7 @@ export const agents = pgTable("agents", {
   maxSteps: integer("max_steps").notNull().default(20),
   isActive: boolean("is_active").notNull().default(true),
   recordTraffic: boolean("record_traffic").notNull().default(false),
+  autoEvaluate: boolean("auto_evaluate").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -91,6 +100,24 @@ export const mcpServers = pgTable("mcp_servers", {
     .defaultNow(),
 });
 
+export const agentVersions = pgTable(
+  "agent_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    hash: text("hash").notNull(),
+    snapshot: jsonb("snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("agent_versions_agent_id_hash_unique").on(table.agentId, table.hash),
+  ],
+);
+
 export const agentRuns = pgTable(
   "agent_runs",
   {
@@ -98,6 +125,10 @@ export const agentRuns = pgTable(
     agentId: uuid("agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
+    agentVersionId: uuid("agent_version_id").references(
+      () => agentVersions.id,
+      { onDelete: "set null" },
+    ),
     source: text("source").notNull(),
     threadId: text("thread_id"),
     status: text("status").notNull().default("ok"),
@@ -120,6 +151,7 @@ export const agentRuns = pgTable(
     index("agent_runs_created_at_idx").on(table.createdAt),
     index("agent_runs_source_idx").on(table.source),
     index("agent_runs_thread_id_idx").on(table.threadId),
+    index("agent_runs_agent_version_id_idx").on(table.agentVersionId),
     check(
       "agent_runs_source_check",
       sql`${table.source} in (${sqlInList(AGENT_RUN_SOURCES)})`,
@@ -147,6 +179,7 @@ export const settings = pgTable(
     transcriptTtlDays: integer("transcript_ttl_days")
       .notNull()
       .default(DEFAULT_TRANSCRIPT_TTL_DAYS),
+    judgeModel: text("judge_model").notNull().default(DEFAULT_JUDGE_MODEL),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -232,6 +265,87 @@ export const fixDrafts = pgTable(
   ],
 );
 
+export const agentCriteria = pgTable(
+  "agent_criteria",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    question: text("question").notNull(),
+    passDescription: text("pass_description"),
+    failDescription: text("fail_description"),
+    appliesWhen: text("applies_when"),
+    failBelow: real("fail_below")
+      .notNull()
+      .default(DEFAULT_CRITERION_FAIL_BELOW),
+    passAbove: real("pass_above")
+      .notNull()
+      .default(DEFAULT_CRITERION_PASS_ABOVE),
+    isActive: boolean("is_active").notNull().default(true),
+    sourceFixDraftId: uuid("source_fix_draft_id").references(
+      () => fixDrafts.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("agent_criteria_agent_id_idx").on(table.agentId),
+    check(
+      "agent_criteria_thresholds_check",
+      sql`0 <= ${table.failBelow} and ${table.failBelow} <= ${table.passAbove} and ${table.passAbove} <= 1`,
+    ),
+  ],
+);
+
+export const runEvaluations = pgTable(
+  "run_evaluations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    criterionId: uuid("criterion_id")
+      .notNull()
+      .references(() => agentCriteria.id, { onDelete: "cascade" }),
+    questionSnapshot: text("question_snapshot").notNull(),
+    pPass: real("p_pass"),
+    pApplies: real("p_applies"),
+    status: text("status").notNull(),
+    skipReason: text("skip_reason"),
+    error: text("error"),
+    judgeModel: text("judge_model"),
+    reviewedVerdict: text("reviewed_verdict"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("run_evaluations_run_id_criterion_id_unique").on(
+      table.runId,
+      table.criterionId,
+    ),
+    index("run_evaluations_criterion_id_idx").on(table.criterionId),
+    check(
+      "run_evaluations_status_check",
+      sql`${table.status} in (${sqlInList(RUN_EVALUATION_STATUSES)})`,
+    ),
+    check(
+      "run_evaluations_skip_reason_check",
+      sql`${table.skipReason} in (${sqlInList(RUN_EVALUATION_SKIP_REASONS)})`,
+    ),
+    check(
+      "run_evaluations_reviewed_verdict_check",
+      sql`${table.reviewedVerdict} in (${sqlInList(REVIEWED_VERDICTS)})`,
+    ),
+  ],
+);
+
 export const agentSkills = pgTable(
   "agent_skills",
   {
@@ -311,7 +425,20 @@ export const agentsRelations = relations(agents, ({ many }) => ({
   subAgents: many(agentSubAgents, { relationName: "parent" }),
   parentAgents: many(agentSubAgents, { relationName: "child" }),
   agentRuns: many(agentRuns),
+  versions: many(agentVersions),
+  criteria: many(agentCriteria),
 }));
+
+export const agentVersionsRelations = relations(
+  agentVersions,
+  ({ one, many }) => ({
+    agent: one(agents, {
+      fields: [agentVersions.agentId],
+      references: [agents.id],
+    }),
+    runs: many(agentRuns),
+  }),
+);
 
 export const skillsRelations = relations(skills, ({ many }) => ({
   agentSkills: many(agentSkills),
@@ -327,12 +454,17 @@ export const mcpServersRelations = relations(mcpServers, ({ many }) => ({
 
 export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   agent: one(agents, { fields: [agentRuns.agentId], references: [agents.id] }),
+  version: one(agentVersions, {
+    fields: [agentRuns.agentVersionId],
+    references: [agentVersions.id],
+  }),
   transcript: one(runTranscripts, {
     fields: [agentRuns.id],
     references: [runTranscripts.runId],
   }),
   calls: many(agentRunCalls),
   fixDrafts: many(fixDrafts),
+  evaluations: many(runEvaluations),
 }));
 
 export const runTranscriptsRelations = relations(runTranscripts, ({ one }) => ({
@@ -349,10 +481,37 @@ export const agentRunCallsRelations = relations(agentRunCalls, ({ one }) => ({
   }),
 }));
 
-export const fixDraftsRelations = relations(fixDrafts, ({ one }) => ({
+export const fixDraftsRelations = relations(fixDrafts, ({ one, many }) => ({
   run: one(agentRuns, {
     fields: [fixDrafts.runId],
     references: [agentRuns.id],
+  }),
+  criteria: many(agentCriteria),
+}));
+
+export const agentCriteriaRelations = relations(
+  agentCriteria,
+  ({ one, many }) => ({
+    agent: one(agents, {
+      fields: [agentCriteria.agentId],
+      references: [agents.id],
+    }),
+    sourceFixDraft: one(fixDrafts, {
+      fields: [agentCriteria.sourceFixDraftId],
+      references: [fixDrafts.id],
+    }),
+    evaluations: many(runEvaluations),
+  }),
+);
+
+export const runEvaluationsRelations = relations(runEvaluations, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [runEvaluations.runId],
+    references: [agentRuns.id],
+  }),
+  criterion: one(agentCriteria, {
+    fields: [runEvaluations.criterionId],
+    references: [agentCriteria.id],
   }),
 }));
 

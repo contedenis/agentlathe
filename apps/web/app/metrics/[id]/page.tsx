@@ -1,6 +1,7 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AgentEvaluationMetrics } from "@/components/agent-evaluation-metrics";
 import { BreadcrumbTitle } from "@/components/breadcrumb-title";
 import { MetricHint } from "@/components/metric-hint";
 import {
@@ -51,6 +52,7 @@ export default async function AgentMetricsPage({
     bySource,
     capabilities,
     parents,
+    evaluation,
     recentErrors,
     previousRuns,
     activeDays,
@@ -253,6 +255,12 @@ export default async function AgentMetricsPage({
               </CardContent>
             </Card>
           </div>
+
+          <AgentEvaluationMetrics
+            evaluation={evaluation}
+            agentId={agent.id}
+            period={period}
+          />
 
           {parents.length > 0 && (
             <Card>

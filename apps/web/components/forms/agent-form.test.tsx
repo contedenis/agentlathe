@@ -127,6 +127,31 @@ describe("AgentForm", () => {
     expect(push).toHaveBeenCalledWith("/agents/agent-9");
   });
 
+  it("sends the recording and evaluation switches, evaluating by default", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
+
+    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+
+    await user.type(screen.getByLabelText("Name"), "My Agent");
+    await user.type(screen.getByLabelText("Model"), "openrouter/model");
+    expect(
+      screen.getByRole("switch", { name: "Evaluate new runs automatically" }),
+    ).toBeChecked();
+    await user.click(
+      screen.getByRole("switch", { name: "Record external traffic" }),
+    );
+    await user.click(
+      screen.getByRole("switch", { name: "Evaluate new runs automatically" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const body = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(body).toMatchObject({ recordTraffic: true, autoEvaluate: false });
+  });
+
   it("rejects a slug with characters outside the allowed pattern before submitting", async () => {
     const user = userEvent.setup();
 

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@agentlathe/db", () => ({
+vi.mock("@agentlathe/db", async (importOriginal) => ({
+  isTrackingEnabled: (await importOriginal<typeof import("@agentlathe/db")>())
+    .isTrackingEnabled,
+  getSettings: vi.fn(),
   recordAgentRun: vi.fn(),
   saveRunTranscript: vi.fn(),
 }));
+vi.mock("./versions", () => ({ resolveAgentVersion: vi.fn() }));
 
-import { recordAgentRun, saveRunTranscript } from "@agentlathe/db";
+import { getSettings, recordAgentRun, saveRunTranscript } from "@agentlathe/db";
 import type { AgentRow } from "./loaders";
 import {
   addChildRunStats,
@@ -14,6 +18,7 @@ import {
   emptyRunStats,
 } from "./recording";
 import type { ToolKind } from "./tools";
+import { resolveAgentVersion } from "./versions";
 
 const toolKinds = new Map<string, ToolKind>([
   ["fetch_data", "tool"],
@@ -195,6 +200,98 @@ describe("createRunRecorder — the single writer of the run record", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(recordAgentRun).mockResolvedValue("run-1");
+    vi.mocked(resolveAgentVersion).mockResolvedValue("version-1");
+    vi.mocked(getSettings).mockResolvedValue({
+      trackDashboardRuns: true,
+      trackV1Runs: true,
+      trackMcpRuns: false,
+      agentRunTtlDays: 90,
+      transcriptTtlDays: 14,
+      judgeModel: "typesafe/jev-1.13",
+    });
+  });
+
+  it("resolves the agent version of a tracked source and records it with the run", async () => {
+    const recorder = createRunRecorder({ agent: agentRow(), source: "v1" });
+    await recorder.record({});
+
+    expect(resolveAgentVersion).toHaveBeenCalledWith("agent-1");
+    expect(recordAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agentVersionId: "version-1" }),
+    );
+  });
+
+  it("resolves the version when the recorder is created, not when it records", async () => {
+    createRunRecorder({ agent: agentRow(), source: "v1" });
+
+    await vi.waitFor(() =>
+      expect(resolveAgentVersion).toHaveBeenCalledWith("agent-1"),
+    );
+    expect(recordAgentRun).not.toHaveBeenCalled();
+  });
+
+  it("a slow version resolution does not inflate the recorded duration", async () => {
+    vi.useFakeTimers();
+    try {
+      let release: (id: string) => void = () => {};
+      vi.mocked(resolveAgentVersion).mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      const recorder = createRunRecorder({ agent: agentRow(), source: "v1" });
+      const pending = recorder.record({});
+      vi.advanceTimersByTime(10_000);
+      release("version-1");
+      await pending;
+
+      expect(recordAgentRun).toHaveBeenCalledWith(
+        expect.objectContaining({ agentVersionId: "version-1", durationMs: 0 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never resolves a version for an untracked source", async () => {
+    const recorder = createRunRecorder({ agent: agentRow(), source: "mcp" });
+    await recorder.record({});
+
+    expect(resolveAgentVersion).not.toHaveBeenCalled();
+    expect(recordAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agentVersionId: null }),
+    );
+  });
+
+  it("a settings failure still records the run, without a version", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.mocked(getSettings).mockRejectedValue(new Error("db down"));
+    const recorder = createRunRecorder({ agent: agentRow(), source: "v1" });
+
+    expect(await recorder.record({})).toBe("run-1");
+    expect(resolveAgentVersion).not.toHaveBeenCalled();
+    expect(recordAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agentVersionId: null }),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("a failed version resolution still records the run, without a version", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.mocked(resolveAgentVersion).mockRejectedValue(new Error("db down"));
+    const recorder = createRunRecorder({ agent: agentRow(), source: "v1" });
+
+    const runId = await recorder.record({});
+
+    expect(runId).toBe("run-1");
+    expect(recordAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agentVersionId: null }),
+    );
+    consoleError.mockRestore();
   });
 
   it("records the run with agent identity, source and normalized ok status", async () => {
@@ -274,6 +371,91 @@ describe("createRunRecorder — the single writer of the run record", () => {
 
     expect(saveRunTranscript).not.toHaveBeenCalled();
     expect(recorder.runId()).toBeNull();
+  });
+
+  describe("onTranscriptSaved", () => {
+    beforeEach(() => {
+      vi.mocked(saveRunTranscript).mockResolvedValue(true);
+    });
+
+    it("fires once with the run id after the transcript is stored", async () => {
+      const onTranscriptSaved = vi.fn();
+      const recorder = createRunRecorder({
+        agent: agentRow(),
+        source: "dashboard",
+        onTranscriptSaved,
+      });
+      await recorder.record({});
+      await recorder.attachTranscript(["in"], ["out"]);
+
+      expect(onTranscriptSaved).toHaveBeenCalledTimes(1);
+      expect(onTranscriptSaved).toHaveBeenCalledWith("run-1");
+    });
+
+    it("does not fire when tracking produced no run row", async () => {
+      vi.mocked(recordAgentRun).mockResolvedValue(null);
+      const onTranscriptSaved = vi.fn();
+      const recorder = createRunRecorder({
+        agent: agentRow(),
+        source: "dashboard",
+        onTranscriptSaved,
+      });
+      await recorder.record({});
+      await recorder.attachTranscript(["in"], ["out"]);
+
+      expect(onTranscriptSaved).not.toHaveBeenCalled();
+    });
+
+    it("does not fire when record_traffic keeps external traffic out", async () => {
+      const onTranscriptSaved = vi.fn();
+      for (const source of ["v1", "mcp"] as const) {
+        const recorder = createRunRecorder({
+          agent: agentRow({ recordTraffic: false }),
+          source,
+          onTranscriptSaved,
+        });
+        await recorder.record({});
+        await recorder.attachTranscript(["in"], ["out"]);
+      }
+
+      expect(saveRunTranscript).not.toHaveBeenCalled();
+      expect(onTranscriptSaved).not.toHaveBeenCalled();
+    });
+
+    it("does not fire when the transcript write failed", async () => {
+      vi.mocked(saveRunTranscript).mockResolvedValue(false);
+      const onTranscriptSaved = vi.fn();
+      const recorder = createRunRecorder({
+        agent: agentRow({ recordTraffic: true }),
+        source: "v1",
+        onTranscriptSaved,
+      });
+      await recorder.record({});
+      await recorder.attachTranscript(["in"], ["out"]);
+
+      expect(saveRunTranscript).toHaveBeenCalledTimes(1);
+      expect(onTranscriptSaved).not.toHaveBeenCalled();
+    });
+
+    it("a throwing callback does not break attachTranscript", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const recorder = createRunRecorder({
+        agent: agentRow(),
+        source: "dashboard",
+        onTranscriptSaved: () => {
+          throw new Error("scheduler down");
+        },
+      });
+      await recorder.record({});
+
+      await expect(
+        recorder.attachTranscript(["in"], ["out"]),
+      ).resolves.toBeUndefined();
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
   });
 
   it("a transcript attached before any record is a no-op", async () => {

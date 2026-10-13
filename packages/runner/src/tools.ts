@@ -56,10 +56,18 @@ async function readCappedText(
   return truncated ? `${text}${TRUNCATION_SUFFIX}` : text;
 }
 
-export async function loadHttpTools(
+export type HttpToolRow = {
+  name: string;
+  description: string;
+  endpoint: string;
+  inputSchema: unknown;
+  needsApproval: boolean;
+};
+
+export async function loadHttpToolRows(
   agentId: string,
-): Promise<{ tools: ToolSet; approvalToolNames: Set<string> }> {
-  const rows = await db
+): Promise<HttpToolRow[]> {
+  return db
     .select({
       name: tools.name,
       description: tools.description,
@@ -70,7 +78,12 @@ export async function loadHttpTools(
     .from(agentTools)
     .innerJoin(tools, eq(agentTools.toolId, tools.id))
     .where(and(eq(agentTools.agentId, agentId), eq(tools.isActive, true)));
+}
 
+export async function loadHttpTools(
+  agentId: string,
+): Promise<{ tools: ToolSet; approvalToolNames: Set<string> }> {
+  const rows = await loadHttpToolRows(agentId);
   const result: ToolSet = {};
   const approvalToolNames = new Set<string>();
   for (const row of rows) {

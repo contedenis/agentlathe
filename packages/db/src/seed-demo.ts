@@ -3,6 +3,7 @@ import { isMain } from "./cli-entry";
 import { db } from "./client";
 import { agentAskToolName, agentSlug } from "./naming";
 import {
+  agentCriteria,
   agentMcpTools,
   agentSkills,
   agentSubAgents,
@@ -226,6 +227,37 @@ const AGENTS = [
   },
 ];
 
+const CRITERIA = [
+  {
+    agent: "Support coordinator",
+    question:
+      "Did the assistant avoid promising a deadline or outcome it does not control?",
+    passDescription:
+      "No date, time or guaranteed outcome is promised, or it is backed by a tool result.",
+    failDescription:
+      "The assistant promises when or how the issue will be fixed without anything confirming it.",
+    appliesWhen: null,
+  },
+  {
+    agent: "Support coordinator",
+    question: "Did the assistant open a ticket for the reported problem?",
+    passDescription: "A ticket was created with a tool during the run.",
+    failDescription:
+      "The user reported a problem and the run ended without creating a ticket.",
+    appliesWhen: "Did the user report a problem with the product or service?",
+  },
+  {
+    agent: "Data assistant",
+    question:
+      "Is every number in the answer taken from a tool result or stated as an assumption?",
+    passDescription:
+      "Each figure comes from a tool result in the transcript or is explicitly labelled as an assumption.",
+    failDescription:
+      "The answer contains figures that appear in no tool result and are not presented as assumptions.",
+    appliesWhen: null,
+  },
+];
+
 export async function seedDemo() {
   const [existing] = await db
     .select({ id: agents.id })
@@ -329,9 +361,18 @@ export async function seedDemo() {
     await tx.insert(agentTools).values(toolLinks);
     await tx.insert(agentSubAgents).values(subAgentLinks);
     await tx.insert(agentMcpTools).values(mcpLinks);
+    const criteriaRows = await tx
+      .insert(agentCriteria)
+      .values(
+        CRITERIA.map(({ agent, ...criterion }) => ({
+          agentId: agentId.get(agent) as string,
+          ...criterion,
+        })),
+      )
+      .returning({ id: agentCriteria.id });
 
     console.log(
-      `seed-demo: ${skillRows.length} skills, ${toolRows.length} tools, ${agentRows.length} agents, ${subAgentLinks.length} sub-agent links, ${mcpLinks.length} MCP tools.`,
+      `seed-demo: ${skillRows.length} skills, ${toolRows.length} tools, ${agentRows.length} agents, ${subAgentLinks.length} sub-agent links, ${mcpLinks.length} MCP tools, ${criteriaRows.length} criteria.`,
     );
     if (SEED_MODEL)
       console.log(`seed-demo: all agents seeded with model "${SEED_MODEL}".`);

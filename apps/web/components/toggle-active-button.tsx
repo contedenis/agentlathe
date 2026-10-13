@@ -10,10 +10,12 @@ export function ToggleActiveButton({
   endpoint,
   isActive,
   size = "default",
+  variant = "outline",
 }: {
   endpoint: string;
   isActive: boolean;
   size?: "default" | "sm";
+  variant?: "outline" | "ghost";
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -36,7 +38,7 @@ export function ToggleActiveButton({
 
   return (
     <Button
-      variant="outline"
+      variant={variant}
       size={size}
       disabled={pending}
       onClick={handleToggle}

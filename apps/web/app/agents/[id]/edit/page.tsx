@@ -37,6 +37,7 @@ export default async function EditAgentPage({
           systemPrompt: agent.systemPrompt,
           maxSteps: agent.maxSteps,
           recordTraffic: agent.recordTraffic,
+          autoEvaluate: agent.autoEvaluate,
           skillIds: agent.skills.map((s) => s.id),
           toolIds: agent.tools.map((t) => t.id),
           subAgentIds: agent.subAgents.map((a) => a.id),

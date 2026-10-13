@@ -31,6 +31,17 @@ describe("parseBody", () => {
     expect(await result.error.json()).toEqual({ error: "Invalid JSON body." });
   });
 
+  it("treats an empty body as {} only when allowed", async () => {
+    const lenient = z.object({ name: z.string().optional() });
+
+    expect(await parseBody(request(""), lenient, { allowEmpty: true })).toEqual(
+      { data: {} },
+    );
+    const strict = await parseBody(request(""), lenient);
+    if (!("error" in strict)) throw new Error("expected an error response");
+    expect(strict.error.status).toBe(400);
+  });
+
   it("answers 400 with the zod issues when the body fails the schema", async () => {
     const result = await parseBody(request('{"name":""}'), schema);
 
@@ -50,6 +61,13 @@ describe("dbErrorResponse — the Postgres code decides the status", () => {
     expect(await res.json()).toEqual({
       error: "Referenced resource does not exist.",
     });
+  });
+
+  it("maps a numeric value out of range to 400", async () => {
+    const res = dbErrorResponse({ cause: { code: "22003" } });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Value out of range." });
   });
 
   it("maps the sub-agent self-reference check violation to a self-reference message", async () => {
