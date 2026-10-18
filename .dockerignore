@@ -12,9 +12,9 @@ node_modules
 .gitignore
 
 # env files: real secrets never go into an image; compose injects them instead
-.env
-.env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
 # docs/tooling not needed inside the image
 docs

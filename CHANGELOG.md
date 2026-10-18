@@ -4,6 +4,14 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+### Security
+
+- Docker images built from a local checkout no longer contain your `.env` files. Until now `apps/web/.env.local`, with its `PROVIDER_API_KEY` and any `AGENTLATHE_SECRET_*` you kept there, was copied into the `migrator` image (the `app` image was not affected).
+
+### Upgrading
+
+- If you built the images from a checkout that had `apps/web/.env.local`, rebuild them (`docker compose build`), delete the old `migrator` image and its build cache (`docker builder prune`), and rotate the `PROVIDER_API_KEY` and any `AGENTLATHE_SECRET_*` values that file held if the image ever left your machine.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
