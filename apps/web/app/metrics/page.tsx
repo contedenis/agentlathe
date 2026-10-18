@@ -75,7 +75,8 @@ export default async function MetricsPage({
   const anyEnabled =
     settings.trackDashboardRuns ||
     settings.trackV1Runs ||
-    settings.trackMcpRuns;
+    settings.trackMcpRuns ||
+    settings.trackScheduleRuns;
 
   const { runPoints, latencyPoints, tokenPoints, sources } = buildChartPoints(
     daily,

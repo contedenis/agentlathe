@@ -13,6 +13,7 @@ export type AppSettings = {
   trackDashboardRuns: boolean;
   trackV1Runs: boolean;
   trackMcpRuns: boolean;
+  trackScheduleRuns: boolean;
   agentRunTtlDays: number;
   transcriptTtlDays: number;
   judgeModel: string;
@@ -26,6 +27,11 @@ export const SOURCES = [
   },
   { key: "trackV1Runs", label: "API /v1", hint: "OpenAI-compatible clients." },
   { key: "trackMcpRuns", label: "MCP", hint: "Agents exposed as MCP." },
+  {
+    key: "trackScheduleRuns",
+    label: "Schedules",
+    hint: "Runs started by a schedule.",
+  },
 ] as const;
 
 export function TrackingToggles({

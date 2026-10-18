@@ -17,6 +17,8 @@ import {
   getAgentDetail,
   getCriteriaCopySources,
 } from "@/lib/queries";
+import { listAgentSchedules } from "@/lib/queries-schedules";
+import { describeTrigger } from "@/lib/scheduler/calendar";
 
 function RefList({
   items,
@@ -46,10 +48,11 @@ export default async function AgentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [agent, criteriaData, copySources] = await Promise.all([
+  const [agent, criteriaData, copySources, agentSchedules] = await Promise.all([
     getAgentDetail(id),
     getAgentCriteria(id),
     getCriteriaCopySources(id),
+    listAgentSchedules(id),
   ]);
   if (!agent) notFound();
 
@@ -116,6 +119,33 @@ export default async function AgentDetailPage({
                       {agent.autoEvaluate
                         ? "New runs judged automatically"
                         : "Only when re-evaluated"}
+                    </dd>
+                    <dt className="text-muted-foreground">Schedules</dt>
+                    <dd>
+                      {agentSchedules.length === 0 ? (
+                        "None"
+                      ) : (
+                        <ul className="flex flex-col gap-0.5">
+                          {agentSchedules.map((schedule) => (
+                            <li key={schedule.id}>
+                              <Link
+                                href={`/schedules/${schedule.id}`}
+                                className="hover:underline"
+                              >
+                                {schedule.name}
+                              </Link>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                · {describeTrigger(schedule)}
+                                {!schedule.isActive &&
+                                  (schedule.pausedReason
+                                    ? " (paused)"
+                                    : " (inactive)")}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </dd>
                     <dt className="text-muted-foreground">System prompt</dt>
                     <dd>

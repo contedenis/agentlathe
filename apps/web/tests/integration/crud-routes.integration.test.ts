@@ -811,6 +811,7 @@ describe("CRUD routes (requires Docker)", () => {
         trackDashboardRuns: true,
         trackV1Runs: false,
         trackMcpRuns: false,
+        trackScheduleRuns: true,
         agentRunTtlDays: 90,
         transcriptTtlDays: 14,
         judgeModel: "typesafe/jev-1.13",

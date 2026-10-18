@@ -25,6 +25,7 @@ const SETTING_KEY_TO_SOURCE: Record<
   trackDashboardRuns: "dashboard",
   trackV1Runs: "v1",
   trackMcpRuns: "mcp",
+  trackScheduleRuns: "schedule",
 };
 
 export function TrackingSettings({
@@ -68,8 +69,8 @@ export function TrackingSettings({
         <PopoverHeader>
           <PopoverTitle>What to record</PopoverTitle>
           <PopoverDescription>
-            One row per run. Messages are stored too: always for the Playground,
-            and for API and MCP calls only on agents that opt in.
+            One row per run. Messages are stored too: always for the Playground
+            and schedules, and for API and MCP calls only on agents that opt in.
           </PopoverDescription>
         </PopoverHeader>
         <TrackingToggles initial={settings} judgeHost={judgeHost} />

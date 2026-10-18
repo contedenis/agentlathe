@@ -105,6 +105,7 @@ export default async function globalSetup() {
       DATABASE_URL: databaseUrl,
       PROVIDER_API_KEY: apiKey,
       APP_URL: `http://localhost:${APP_PORT}`,
+      SCHEDULER_ENABLED: "false",
     },
     stdio: "ignore",
     shell: true,

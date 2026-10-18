@@ -198,11 +198,18 @@ export type RunRecorderOptions = {
   agent: AgentRow;
   source: AgentRunSource;
   threadId?: string | null;
+  scheduleId?: string | null;
   onTranscriptSaved?: (runId: string) => void;
 };
 
 export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
-  const { agent, source, threadId = null, onTranscriptSaved } = run;
+  const {
+    agent,
+    source,
+    threadId = null,
+    scheduleId = null,
+    onTranscriptSaved,
+  } = run;
   const startedAt = Date.now();
   let recorded: string | null = null;
   const version = getSettings()
@@ -224,6 +231,7 @@ export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
         agentVersionId: await version,
         source,
         threadId,
+        scheduleId,
         model: agent.model,
         durationMs: elapsedMs,
         ...(stats ?? {}),
@@ -238,7 +246,8 @@ export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
     },
     attachTranscript: async (input, output) => {
       if (!recorded) return;
-      if (source !== "dashboard" && !agent.recordTraffic) return;
+      const ownTraffic = source === "dashboard" || source === "schedule";
+      if (!ownTraffic && !agent.recordTraffic) return;
       const runId = recorded;
       if (!(await saveRunTranscript(runId, input, output))) return;
       try {

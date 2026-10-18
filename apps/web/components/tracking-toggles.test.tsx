@@ -19,6 +19,7 @@ const settings: AppSettings = {
   trackDashboardRuns: true,
   trackV1Runs: true,
   trackMcpRuns: true,
+  trackScheduleRuns: true,
   agentRunTtlDays: 30,
   transcriptTtlDays: 7,
   judgeModel: "typesafe/jev-1.13",
@@ -90,5 +91,20 @@ describe("TrackingToggles judge model", () => {
 
     expect(toast.error).toHaveBeenCalledWith("bad model");
     expect(input).toHaveValue("typesafe/jev-1.13");
+  });
+});
+
+describe("TrackingToggles sources", () => {
+  it("turns off recording of scheduled runs with its own flag", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue(undefined);
+    render(<TrackingToggles initial={settings} judgeHost="openrouter.ai" />);
+
+    await user.click(screen.getByRole("switch", { name: "Schedules" }));
+
+    expect(apiRequest).toHaveBeenCalledWith("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ trackScheduleRuns: false }),
+    });
   });
 });

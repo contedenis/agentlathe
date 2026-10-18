@@ -18,6 +18,7 @@ const settings: AppSettings = {
   trackDashboardRuns: true,
   trackV1Runs: false,
   trackMcpRuns: false,
+  trackScheduleRuns: true,
   agentRunTtlDays: 90,
   transcriptTtlDays: 14,
   judgeModel: "typesafe/jev-1.13",
@@ -31,7 +32,7 @@ describe("scheduleRetentionSweep", () => {
   it("schedules the sweep via after() instead of running inline", () => {
     scheduleRetentionSweep(settings);
 
-    expect(after).toHaveBeenCalledTimes(2);
+    expect(after).toHaveBeenCalledTimes(1);
     expect(deleteExpiredAgentRuns).not.toHaveBeenCalled();
     expect(deleteExpiredTranscripts).not.toHaveBeenCalled();
   });

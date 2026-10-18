@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -22,6 +23,7 @@ import {
   DEFAULT_JUDGE_MODEL,
   DEFAULT_TRACK_DASHBOARD_RUNS,
   DEFAULT_TRACK_MCP_RUNS,
+  DEFAULT_TRACK_SCHEDULE_RUNS,
   DEFAULT_TRACK_V1_RUNS,
   DEFAULT_TRANSCRIPT_TTL_DAYS,
   FIX_DRAFT_CATEGORIES,
@@ -29,6 +31,8 @@ import {
   REVIEWED_VERDICTS,
   RUN_EVALUATION_SKIP_REASONS,
   RUN_EVALUATION_STATUSES,
+  SCHEDULE_FREQUENCIES,
+  SCHEDULE_OCCURRENCE_STATUSES,
 } from "./constants";
 
 export * from "./constants";
@@ -118,6 +122,59 @@ export const agentVersions = pgTable(
   ],
 );
 
+export const schedules = pgTable(
+  "schedules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    frequency: text("frequency").notNull(),
+    timeOfDay: text("time_of_day").notNull(),
+    weekday: integer("weekday"),
+    startDate: date("start_date"),
+    timezone: text("timezone").notNull(),
+    input: text("input").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    pausedReason: text("paused_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("schedules_agent_id_idx").on(table.agentId),
+    index("schedules_next_run_at_idx")
+      .on(table.nextRunAt)
+      .where(sql`${table.isActive}`),
+    check(
+      "schedules_frequency_check",
+      sql`${table.frequency} in (${sqlInList(SCHEDULE_FREQUENCIES)})`,
+    ),
+    check(
+      "schedules_time_of_day_check",
+      sql`${table.timeOfDay} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`,
+    ),
+    check(
+      "schedules_weekday_check",
+      sql`(${table.frequency} = 'weekly') = (${table.weekday} is not null) and (${table.weekday} is null or ${table.weekday} between 0 and 6)`,
+    ),
+    check(
+      "schedules_start_date_check",
+      sql`${table.frequency} <> 'monthly' or ${table.startDate} is not null`,
+    ),
+    check(
+      "schedules_consecutive_failures_check",
+      sql`${table.consecutiveFailures} >= 0`,
+    ),
+  ],
+);
+
 export const agentRuns = pgTable(
   "agent_runs",
   {
@@ -129,6 +186,9 @@ export const agentRuns = pgTable(
       () => agentVersions.id,
       { onDelete: "set null" },
     ),
+    scheduleId: uuid("schedule_id").references(() => schedules.id, {
+      onDelete: "set null",
+    }),
     source: text("source").notNull(),
     threadId: text("thread_id"),
     status: text("status").notNull().default("ok"),
@@ -152,6 +212,7 @@ export const agentRuns = pgTable(
     index("agent_runs_source_idx").on(table.source),
     index("agent_runs_thread_id_idx").on(table.threadId),
     index("agent_runs_agent_version_id_idx").on(table.agentVersionId),
+    index("agent_runs_schedule_id_idx").on(table.scheduleId),
     check(
       "agent_runs_source_check",
       sql`${table.source} in (${sqlInList(AGENT_RUN_SOURCES)})`,
@@ -173,6 +234,12 @@ export const settings = pgTable(
     trackMcpRuns: boolean("track_mcp_runs")
       .notNull()
       .default(DEFAULT_TRACK_MCP_RUNS),
+    trackScheduleRuns: boolean("track_schedule_runs")
+      .notNull()
+      .default(DEFAULT_TRACK_SCHEDULE_RUNS),
+    schedulerHeartbeatAt: timestamp("scheduler_heartbeat_at", {
+      withTimezone: true,
+    }),
     agentRunTtlDays: integer("agent_run_ttl_days")
       .notNull()
       .default(DEFAULT_AGENT_RUN_TTL_DAYS),
@@ -189,6 +256,38 @@ export const settings = pgTable(
     check(
       "settings_transcript_ttl_check",
       sql`${table.transcriptTtlDays} >= 0`,
+    ),
+  ],
+);
+
+export const scheduleOccurrences = pgTable(
+  "schedule_occurrences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scheduleId: uuid("schedule_id")
+      .notNull()
+      .references(() => schedules.id, { onDelete: "cascade" }),
+    nominalAt: timestamp("nominal_at", { withTimezone: true }).notNull(),
+    status: text("status").notNull(),
+    reason: text("reason"),
+    runId: uuid("run_id").references(() => agentRuns.id, {
+      onDelete: "set null",
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("schedule_occurrences_schedule_id_nominal_at_unique").on(
+      table.scheduleId,
+      table.nominalAt,
+    ),
+    index("schedule_occurrences_run_id_idx").on(table.runId),
+    check(
+      "schedule_occurrences_status_check",
+      sql`${table.status} in (${sqlInList(SCHEDULE_OCCURRENCE_STATUSES)})`,
     ),
   ],
 );
@@ -427,6 +526,7 @@ export const agentsRelations = relations(agents, ({ many }) => ({
   agentRuns: many(agentRuns),
   versions: many(agentVersions),
   criteria: many(agentCriteria),
+  schedules: many(schedules),
 }));
 
 export const agentVersionsRelations = relations(
@@ -458,6 +558,10 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
     fields: [agentRuns.agentVersionId],
     references: [agentVersions.id],
   }),
+  schedule: one(schedules, {
+    fields: [agentRuns.scheduleId],
+    references: [schedules.id],
+  }),
   transcript: one(runTranscripts, {
     fields: [agentRuns.id],
     references: [runTranscripts.runId],
@@ -466,6 +570,26 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   fixDrafts: many(fixDrafts),
   evaluations: many(runEvaluations),
 }));
+
+export const schedulesRelations = relations(schedules, ({ one, many }) => ({
+  agent: one(agents, { fields: [schedules.agentId], references: [agents.id] }),
+  occurrences: many(scheduleOccurrences),
+  runs: many(agentRuns),
+}));
+
+export const scheduleOccurrencesRelations = relations(
+  scheduleOccurrences,
+  ({ one }) => ({
+    schedule: one(schedules, {
+      fields: [scheduleOccurrences.scheduleId],
+      references: [schedules.id],
+    }),
+    run: one(agentRuns, {
+      fields: [scheduleOccurrences.runId],
+      references: [agentRuns.id],
+    }),
+  }),
+);
 
 export const runTranscriptsRelations = relations(runTranscripts, ({ one }) => ({
   run: one(agentRuns, {

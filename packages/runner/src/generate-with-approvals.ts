@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import {
+  type ApprovalStrategy,
   buildDashboardToolApproval,
   buildHeadlessToolApproval,
 } from "./approval";
@@ -23,6 +24,7 @@ export async function generateWithApprovals(
   message: string,
   options: {
     askApproval?: (pending: PendingApproval) => Promise<boolean>;
+    headlessApproval?: ApprovalStrategy;
     onProgress?: (progress: AgentProgress) => void;
     maxRounds?: number;
     abortSignal?: AbortSignal;
@@ -31,6 +33,7 @@ export async function generateWithApprovals(
 ): Promise<{ text: string; stats: AgentRunStats }> {
   const {
     askApproval,
+    headlessApproval = buildHeadlessToolApproval,
     onProgress,
     maxRounds = 8,
     abortSignal,
@@ -38,7 +41,7 @@ export async function generateWithApprovals(
   } = options;
   const buildApproval = askApproval
     ? buildDashboardToolApproval
-    : buildHeadlessToolApproval;
+    : headlessApproval;
 
   const maxSteps = agent.maxSteps ?? 20;
   let stepsUsed = 0;

@@ -21,3 +21,15 @@ export function formatDay(day: string): string {
   const [year, month, date] = day.split("-");
   return `${month}/${date}/${year}`;
 }
+
+export function formatInZone(date: Date | string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(date));
+}

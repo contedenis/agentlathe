@@ -13,12 +13,18 @@ export const buildDashboardToolApproval: ApprovalStrategy =
       ? "user-approval"
       : "not-applicable";
 
-export const buildHeadlessToolApproval: ApprovalStrategy =
-  (approvalToolNames) =>
-  ({ toolCall }: { toolCall: { toolName: string } }) =>
-    approvalToolNames.has(toolCall.toolName)
-      ? {
-          type: "denied",
-          reason: `tool '${toolCall.toolName}' requires approval; not available over the API`,
-        }
-      : "not-applicable";
+function headlessToolApproval(where: string): ApprovalStrategy {
+  return (approvalToolNames) =>
+    ({ toolCall }: { toolCall: { toolName: string } }) =>
+      approvalToolNames.has(toolCall.toolName)
+        ? {
+            type: "denied",
+            reason: `tool '${toolCall.toolName}' requires approval; not available ${where}`,
+          }
+        : "not-applicable";
+}
+
+export const buildHeadlessToolApproval = headlessToolApproval("over the API");
+
+export const buildScheduledToolApproval =
+  headlessToolApproval("in scheduled runs");

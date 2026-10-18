@@ -5,20 +5,18 @@ import {
 } from "@agentlathe/db";
 import { after } from "next/server";
 
-// TTL enforcement rides page views instead of a cron: call it explicitly, never from a read.
+export async function runRetentionSweep(settings: AppSettings): Promise<void> {
+  const [runs, transcripts] = await Promise.allSettled([
+    deleteExpiredAgentRuns(settings.agentRunTtlDays),
+    deleteExpiredTranscripts(settings.transcriptTtlDays),
+  ]);
+  if (runs.status === "rejected")
+    console.error("deleteExpiredAgentRuns failed", runs.reason);
+  if (transcripts.status === "rejected")
+    console.error("deleteExpiredTranscripts failed", transcripts.reason);
+}
+
+// TTL enforcement rides page views and the scheduler's tick: call it explicitly, never from a read.
 export function scheduleRetentionSweep(settings: AppSettings): void {
-  after(async () => {
-    try {
-      await deleteExpiredAgentRuns(settings.agentRunTtlDays);
-    } catch (err) {
-      console.error("deleteExpiredAgentRuns failed", err);
-    }
-  });
-  after(async () => {
-    try {
-      await deleteExpiredTranscripts(settings.transcriptTtlDays);
-    } catch (err) {
-      console.error("deleteExpiredTranscripts failed", err);
-    }
-  });
+  after(() => runRetentionSweep(settings));
 }

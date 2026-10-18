@@ -104,17 +104,69 @@ Three guards, all of which return an error string to the model rather than throw
 
 Children always run headless, so an approval-gated tool inside a sub-agent is denied, not executed.
 
+## Schedules
+
+A schedule sends a fixed message to an agent on a repeating trigger and records the run, with nobody calling it. In the UI: **Schedules → New schedule**.
+
+The trigger is a preset, not a cron expression:
+
+| Repeats | Runs |
+|---|---|
+| Every hour | First at the time you set, then every hour at that minute |
+| Daily | Every day at the time |
+| Weekdays | Monday to Friday at the time |
+| Weekly | On the weekday you pick, at the time |
+| Monthly | On the day of the start date you pick, at the time. In months without that day (a 31st in April, a 30th in February) it runs on the last day of the month |
+
+Times are 24-hour and belong to a time zone: the form uses your browser's and shows it, and the schedule keeps it. Across a daylight-saving change a time that does not exist that day moves forward by the gap, and a time that repeats runs once, at the first of the two. "Every hour" runs every real hour and never less than an hour apart, including the hour that repeats when clocks go back. The form previews the next five runs.
+
+The message can carry variables, filled in for each run: `{{date}}` and `{{datetime}}` (when the run was due, in the schedule's time zone), `{{nominal_at}}` (the same time in UTC), `{{last_success_at}}` (when the last successful run was due, or `never`) and `{{schedule}}` (its name).
+
+**Every time a schedule comes due it leaves an occurrence**, listed on the schedule's page with its result, the reason and a link to the run:
+
+- **succeeded** / **failed** — the run finished, or ended with an error.
+- **skipped · missed** — it came due more than 2 minutes before a scheduler saw it (the app was down, or no scheduler was running). Missed runs are skipped, never caught up: after downtime the schedule runs again at its next time.
+- **skipped · overlap** — the previous run of the same schedule was still going.
+- **blocked** — a check before calling the model failed: the agent is inactive, `PROVIDER_API_KEY` is not set, or an MCP server the agent uses references an `AGENTLATHE_SECRET_*` variable that is not set.
+- **interrupted** — the app stopped while the run was in progress.
+
+There are no retries. After **5 failed or blocked runs in a row** the schedule pauses itself and says why; activating it again clears the count. Skipped and interrupted runs do not count.
+
+**Run now** starts a run immediately, whether or not the schedule is active, and does not move its next run; it is refused while another run of the same schedule is in progress.
+
+A scheduled run has no human to ask, so a tool that requires approval is denied with the reason "not available in scheduled runs", the same way `/v1` denies it. Scheduled runs appear in **Runs** with the source **Scheduled**, are recorded by default, and always keep their transcript, like the Playground's: they are your own automation, not third-party traffic.
+
+Schedules fire only while a scheduler is running, which the app does by itself unless `SCHEDULER_ENABLED` is `false`; the Schedules page says when it last ticked, or warns that nothing is running. See [DEPLOYMENT.md](DEPLOYMENT.md#the-scheduler).
+
+```bash
+curl -X POST http://localhost:3000/api/schedules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "<agent-uuid>",
+    "name": "Monday digest",
+    "frequency": "weekly",
+    "weekday": 1,
+    "timeOfDay": "09:00",
+    "timezone": "Europe/Madrid",
+    "input": "Summarize what changed since {{last_success_at}}."
+  }'
+
+# weekday is 0 (Sunday) to 6 and only for weekly; startDate (YYYY-MM-DD) only for monthly
+curl -X POST http://localhost:3000/api/schedules/<schedule-uuid>/run
+curl http://localhost:3000/api/schedules/<schedule-uuid>/occurrences
+```
+
 ## Metrics
 
 Three tables, deliberately separated:
 
-- **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp`), status, `thread_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
+- **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp` / `schedule`), status, `thread_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
 - **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
 - **`run_transcripts`** — the actual input and output messages, keyed 1:1 on the run.
 
 Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections and sub-agents. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
 
-Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` defaults to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
+Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
 
 ```bash
 curl -X PATCH http://localhost:3000/api/settings \
@@ -122,7 +174,7 @@ curl -X PATCH http://localhost:3000/api/settings \
   -d '{ "trackV1Runs": true, "agentRunTtlDays": 30, "transcriptTtlDays": 7 }'
 ```
 
-Retention is TTL-based and swept lazily (no cron): runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs, criteria and versions; deleting a run deletes its transcript, notes and verdicts. Agent versions have no TTL.
+Retention is TTL-based and swept lazily, when a page that shows runs loads and about every ten minutes while a [scheduler](#schedules) runs: runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs, criteria and versions; deleting a run deletes its transcript, notes and verdicts. Agent versions have no TTL.
 
 **Evaluation.** When an agent has [criteria](#criteria), its metrics page (`/metrics/[id]`) has an Evaluation section for the selected range, and `/metrics` shows the overall pass rate, the runs awaiting review (all of them, not only those in the range, linking to the same queue in the runs list) and a pass-rate column per agent. Everything follows the criteria counting rules: your review overrides the judge, unreviewed needs-review, not-applicable, skipped and errored verdicts stay out of the rate, and only verdicts given to the criterion's current question count.
 
@@ -296,14 +348,14 @@ Two things get stored, and they are governed separately:
 
 | | What it stores | Default | Where to change it |
 |---|---|---|---|
-| **Run** | One row: agent, source, status, duration, steps, tokens, tool calls. No message content. | Playground **on**; API and MCP **off** | "What to record" in `/metrics`, or `PATCH /api/settings` |
-| **Transcript** | The actual messages of the call, input and output. | Playground **always**; API and MCP **off** | "Record external traffic" on the agent |
+| **Run** | One row: agent, source, status, duration, steps, tokens, tool calls. No message content. | Playground and schedules **on**; API and MCP **off** | "What to record" in `/metrics`, or `PATCH /api/settings` |
+| **Transcript** | The actual messages of the call, input and output. | Playground and schedules **always**; API and MCP **off** | "Record external traffic" on the agent |
 
 So the default is: your own experiments are recorded, third-party traffic is not — until you decide otherwise, per agent.
 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key, a customer's email or a medical record in a message, that is what lands in your database, in plaintext, on any agent you switched recording on for. agentlathe does not detect, mask or hash anything. Turning on recording for an agent that serves real users is a decision about their data, not just yours — make it deliberately, and tell them if that is what your jurisdiction expects.
 
-Retention is TTL-based and swept lazily (no cron): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs, and deleting a run deletes its transcript, notes and verdicts. A verdict outlives the transcript it was judged on, which is why a run older than the transcript TTL can no longer be re-evaluated.
+Retention is TTL-based and swept lazily (on page loads, and every ten minutes or so while a scheduler runs): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs, and deleting a run deletes its transcript, notes and verdicts. A verdict outlives the transcript it was judged on, which is why a run older than the transcript TTL can no longer be re-evaluated.
 
 **Evaluated transcripts leave the instance.** When an agent has active criteria, each run that is evaluated (or previewed against a draft criterion) is sent to the judge as text: TypeSafe's Jev, through OpenRouter by default or the host `JUDGE_URL` names. Agents without criteria send nothing, and switching off "Evaluate new runs automatically" limits it to the runs you evaluate by hand.
 

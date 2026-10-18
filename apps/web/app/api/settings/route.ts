@@ -11,6 +11,7 @@ const trackingSchema = z
     trackDashboardRuns: z.boolean().optional(),
     trackV1Runs: z.boolean().optional(),
     trackMcpRuns: z.boolean().optional(),
+    trackScheduleRuns: z.boolean().optional(),
     agentRunTtlDays: z
       .number()
       .int()

@@ -17,6 +17,8 @@ import {
   runEvaluations,
   runTranscripts,
   SECRET_ENV_PREFIX,
+  scheduleOccurrences,
+  schedules,
   skills,
   tools,
 } from "@agentlathe/db";
@@ -256,6 +258,11 @@ export async function getRunForReview(id: string) {
       agentName: agents.name,
       versionHash: agentVersions.hash,
       versionSnapshot: agentVersions.snapshot,
+      scheduleId: agentRuns.scheduleId,
+      scheduleName: schedules.name,
+      scheduleTimezone: schedules.timezone,
+      scheduledFor: scheduleOccurrences.nominalAt,
+      scheduleStartedAt: scheduleOccurrences.startedAt,
       input: runTranscripts.input,
       output: runTranscripts.output,
       hasTranscript: sql<boolean>`${runTranscripts.runId} is not null`,
@@ -264,6 +271,8 @@ export async function getRunForReview(id: string) {
     .innerJoin(agents, eq(agentRuns.agentId, agents.id))
     .leftJoin(agentVersions, eq(agentRuns.agentVersionId, agentVersions.id))
     .leftJoin(runTranscripts, eq(runTranscripts.runId, agentRuns.id))
+    .leftJoin(schedules, eq(schedules.id, agentRuns.scheduleId))
+    .leftJoin(scheduleOccurrences, eq(scheduleOccurrences.runId, agentRuns.id))
     .where(eq(agentRuns.id, id))
     .limit(1);
   if (!row) return undefined;

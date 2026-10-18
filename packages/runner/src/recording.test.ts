@@ -205,6 +205,7 @@ describe("createRunRecorder — the single writer of the run record", () => {
       trackDashboardRuns: true,
       trackV1Runs: true,
       trackMcpRuns: false,
+      trackScheduleRuns: true,
       agentRunTtlDays: 90,
       transcriptTtlDays: 14,
       judgeModel: "typesafe/jev-1.13",
@@ -340,6 +341,35 @@ describe("createRunRecorder — the single writer of the run record", () => {
     await recorder.attachTranscript(["in"], ["out"]);
 
     expect(saveRunTranscript).toHaveBeenCalledWith("run-1", ["in"], ["out"]);
+  });
+
+  it("scheduled runs always store a transcript too: they are the instance's own automation", async () => {
+    const recorder = createRunRecorder({
+      agent: agentRow({ recordTraffic: false }),
+      source: "schedule",
+    });
+    await recorder.record({});
+    await recorder.attachTranscript(["in"], ["out"]);
+
+    expect(saveRunTranscript).toHaveBeenCalledWith("run-1", ["in"], ["out"]);
+  });
+
+  it("records the schedule a run came from, and null for every other run", async () => {
+    await createRunRecorder({
+      agent: agentRow(),
+      source: "schedule",
+      scheduleId: "schedule-1",
+    }).record({});
+    await createRunRecorder({ agent: agentRow(), source: "v1" }).record({});
+
+    expect(recordAgentRun).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ source: "schedule", scheduleId: "schedule-1" }),
+    );
+    expect(recordAgentRun).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ source: "v1", scheduleId: null }),
+    );
   });
 
   it("external traffic is only stored when the agent opted in", async () => {

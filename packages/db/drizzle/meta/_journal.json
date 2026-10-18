@@ -22,6 +22,13 @@
       "when": 1791838507227,
       "tag": "0002_evaluators",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792325765210,
+      "tag": "0003_schedules",
+      "breakpoints": true
     }
   ]
 }

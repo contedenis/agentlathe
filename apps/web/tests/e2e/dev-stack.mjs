@@ -106,6 +106,7 @@ const app = spawn("pnpm", ["exec", "next", "dev", "-p", String(APP_PORT)], {
     PROVIDER_API_KEY: apiKey,
     // The proxy's Host allowlist defaults to :3000; this stack runs on another port.
     APP_URL: `http://localhost:${APP_PORT}`,
+    SCHEDULER_ENABLED: "false",
   },
   stdio: "inherit",
   shell: true,

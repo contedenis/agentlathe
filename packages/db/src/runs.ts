@@ -5,6 +5,7 @@ import {
   DEFAULT_JUDGE_MODEL,
   DEFAULT_TRACK_DASHBOARD_RUNS,
   DEFAULT_TRACK_MCP_RUNS,
+  DEFAULT_TRACK_SCHEDULE_RUNS,
   DEFAULT_TRACK_V1_RUNS,
   DEFAULT_TRANSCRIPT_TTL_DAYS,
 } from "./constants";
@@ -21,6 +22,7 @@ export type TrackingFlags = {
   trackDashboardRuns: boolean;
   trackV1Runs: boolean;
   trackMcpRuns: boolean;
+  trackScheduleRuns: boolean;
 };
 
 export type AppSettings = TrackingFlags & {
@@ -33,6 +35,7 @@ const TRACK_COLUMN = {
   dashboard: "trackDashboardRuns",
   v1: "trackV1Runs",
   mcp: "trackMcpRuns",
+  schedule: "trackScheduleRuns",
 } as const satisfies Record<AgentRunSource, keyof TrackingFlags>;
 
 export function isTrackingEnabled(
@@ -46,6 +49,7 @@ const DEFAULTS: AppSettings = {
   trackDashboardRuns: DEFAULT_TRACK_DASHBOARD_RUNS,
   trackV1Runs: DEFAULT_TRACK_V1_RUNS,
   trackMcpRuns: DEFAULT_TRACK_MCP_RUNS,
+  trackScheduleRuns: DEFAULT_TRACK_SCHEDULE_RUNS,
   agentRunTtlDays: DEFAULT_AGENT_RUN_TTL_DAYS,
   transcriptTtlDays: DEFAULT_TRANSCRIPT_TTL_DAYS,
   judgeModel: DEFAULT_JUDGE_MODEL,
@@ -57,6 +61,7 @@ export async function getSettings(): Promise<AppSettings> {
       trackDashboardRuns: settings.trackDashboardRuns,
       trackV1Runs: settings.trackV1Runs,
       trackMcpRuns: settings.trackMcpRuns,
+      trackScheduleRuns: settings.trackScheduleRuns,
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
       judgeModel: settings.judgeModel,
@@ -80,6 +85,7 @@ export async function setSettings(
       trackDashboardRuns: settings.trackDashboardRuns,
       trackV1Runs: settings.trackV1Runs,
       trackMcpRuns: settings.trackMcpRuns,
+      trackScheduleRuns: settings.trackScheduleRuns,
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
       judgeModel: settings.judgeModel,
@@ -97,6 +103,7 @@ export type AgentRunCall = {
 export type AgentRunRecord = {
   agentId: string;
   agentVersionId?: string | null;
+  scheduleId?: string | null;
   source: AgentRunSource;
   threadId?: string | null;
   durationMs: number;

@@ -31,6 +31,7 @@ vi.mock("./helpers", async (importOriginal) => {
   return { ...actual, buildProvider: vi.fn(() => ({ model: "stub" })) };
 });
 
+import { buildScheduledToolApproval } from "./approval";
 import { generateWithApprovals } from "./generate-with-approvals";
 import type { AgentRow } from "./loaders";
 import { buildTools } from "./tools";
@@ -172,6 +173,31 @@ describe("generateWithApprovals — the approval loop", () => {
     ]);
     expect(text).toBe("denied");
     expect(stats.approvalsGranted).toBe(0);
+  });
+
+  it("headless denials explain themselves per transport: the API by default, scheduled runs when asked", async () => {
+    const deniedReason = () => {
+      const { toolApproval } = constructedConfigs.at(-1) as {
+        toolApproval: (opts: { toolCall: { toolName: string } }) => {
+          reason: string;
+        };
+      };
+      return toolApproval({ toolCall: { toolName: "danger" } }).reason;
+    };
+
+    generateQueue.push(finalResult("done"));
+    await generateWithApprovals(agent, "hola");
+    expect(deniedReason()).toBe(
+      "tool 'danger' requires approval; not available over the API",
+    );
+
+    generateQueue.push(finalResult("done"));
+    await generateWithApprovals(agent, "hola", {
+      headlessApproval: buildScheduledToolApproval,
+    });
+    expect(deniedReason()).toBe(
+      "tool 'danger' requires approval; not available in scheduled runs",
+    );
   });
 
   it("reports progress while waiting for an approval", async () => {

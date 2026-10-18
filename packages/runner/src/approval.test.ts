@@ -26,6 +26,7 @@ vi.mock("./helpers", () => ({
 import {
   buildDashboardToolApproval,
   buildHeadlessToolApproval,
+  buildScheduledToolApproval,
 } from "./approval";
 import { type AgentRow, loadSkills } from "./loaders";
 import { buildAgentRuntime } from "./runtime";
@@ -94,6 +95,21 @@ describe("buildHeadlessToolApproval — pure function (/v1 headless)", () => {
     expect(approval({ toolCall: { toolName: "danger" } })).toBe(
       "not-applicable",
     );
+  });
+});
+
+describe("buildScheduledToolApproval — pure function (scheduled runs)", () => {
+  it("denies like the API strategy, with a reason that names scheduled runs", () => {
+    const approval = buildScheduledToolApproval(
+      new Set(["danger"]),
+    ) as ApprovalFn;
+
+    expect(approval({ toolCall: { toolName: "danger" } })).toEqual({
+      type: "denied",
+      reason:
+        "tool 'danger' requires approval; not available in scheduled runs",
+    });
+    expect(approval({ toolCall: { toolName: "safe" } })).toBe("not-applicable");
   });
 });
 

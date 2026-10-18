@@ -6,6 +6,7 @@ describe("sourceLabel", () => {
     expect(sourceLabel("dashboard")).toBe("Playground");
     expect(sourceLabel("v1")).toBe("API /v1");
     expect(sourceLabel("mcp")).toBe("MCP");
+    expect(sourceLabel("schedule")).toBe("Scheduled");
   });
 
   it("falls back to the raw value for a source it does not know", () => {

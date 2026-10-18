@@ -133,6 +133,49 @@ describe("recordAgentRun / deleteExpiredAgentRuns (requires Docker)", () => {
     expect(rows[0].status).toBe("ok");
   });
 
+  it("records scheduled runs by default, with the schedule they came from", async () => {
+    const { recordAgentRun, setSettings } = await import("../../src/runs");
+    const agent = await makeAgent("scheduled runs");
+    const [schedule] = await db
+      .insert(schema.schedules)
+      .values({
+        agentId: agent.id,
+        name: "Morning digest",
+        frequency: "daily",
+        timeOfDay: "09:00",
+        timezone: "America/Argentina/Buenos_Aires",
+        input: "Summarize yesterday.",
+      })
+      .returning();
+
+    const runId = await recordAgentRun({
+      agentId: agent.id,
+      source: "schedule",
+      scheduleId: schedule.id,
+      durationMs: 40,
+    });
+    expect(runId).toEqual(expect.any(String));
+
+    await setSettings({ trackScheduleRuns: false });
+    expect(
+      await recordAgentRun({
+        agentId: agent.id,
+        source: "schedule",
+        scheduleId: schedule.id,
+        durationMs: 40,
+      }),
+    ).toBeNull();
+    await setSettings({ trackScheduleRuns: true });
+
+    const rows = await runsFor(agent.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: runId,
+      source: "schedule",
+      scheduleId: schedule.id,
+    });
+  });
+
   it("truncates long error messages instead of failing the insert", async () => {
     const { recordAgentRun, setSettings } = await import("../../src/runs");
     const agent = await makeAgent("long error");

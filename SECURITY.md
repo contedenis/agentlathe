@@ -61,21 +61,21 @@ HTTP tool endpoints and MCP server URLs are provided by the operator and stored 
 
 ## Approval gate covers HTTP and MCP tools; sub-agents bypass it
 
-The `needsApproval` flag exists for HTTP tools and, per agent, for each selected MCP server tool: when set, the runner prompts for approval before executing the tool call (Playground banner, MCP elicitation) or denies it on the headless surfaces (`/v1`, sub-agents). Sub-agent invocations themselves have no gate — delegation to a sub-agent always proceeds, and everything a sub-agent runs is headless, so its own gated tools are denied rather than executed.
+The `needsApproval` flag exists for HTTP tools and, per agent, for each selected MCP server tool: when set, the runner prompts for approval before executing the tool call (Playground banner, MCP elicitation) or denies it on the headless surfaces (`/v1`, sub-agents, scheduled runs). Sub-agent invocations themselves have no gate — delegation to a sub-agent always proceeds, and everything a sub-agent runs is headless, so its own gated tools are denied rather than executed.
 
 **Is that acceptable?** For the current scope — single tenant, you choose which tools each agent gets — yes. The approval gate is a reminder, not a security boundary; the real control is the operator's choice of which tools to expose.
 
 **Revisit — an approval surface for sub-agent delegation — if** delegation itself ever becomes a sensitive action in your setup.
 
-## Retention sweep is lazy and tied to dashboard page loads
+## Retention sweep is lazy, and needs a page load or a scheduler
 
-Run and transcript retention is enforced by a lazy sweep: when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, a background job queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions. In a headless instance — one that only receives `/v1` API or `/mcp` server traffic and never loads the dashboard — the sweep never runs, and expired data accumulates indefinitely.
+Run and transcript retention is enforced by a lazy sweep that queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). It runs when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, and about every ten minutes while the app's scheduler runs, which it does by default. Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions.
 
-**Is that acceptable?** For a development lab bound to `127.0.0.1` — yes. Headless instances are rare in the current scope, and lazy deletion is simpler than a scheduled cron job. The data is already single-tenant and not exposed.
+**Is that acceptable?** Yes. A headless instance — one that only receives `/v1` or `/mcp` traffic and never loads the dashboard — is swept by its scheduler.
 
-**The caveat:** A headless operator (load balancer, external system calling `/v1` only) will never trigger the sweep.
+**The caveat:** With `SCHEDULER_ENABLED=false` on every process and no one loading the dashboard, the sweep never runs and expired data accumulates.
 
-**Revisit — add an explicit scheduled retention job (cron, or a Lambda / Cloud Task) — before** operating a headless instance at scale or retaining sensitive data for extended periods.
+**Revisit — an independent retention job — if** you run the scheduler off on every replica for long periods.
 
 ## Reporting a vulnerability
 

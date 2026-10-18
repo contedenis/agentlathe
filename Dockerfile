@@ -44,6 +44,7 @@ COPY --from=builder --chown=node:node /app/apps/web/public ./apps/web/public
 
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ENV NEXT_MANUAL_SIG_HANDLE=true
 EXPOSE 3000
 USER node
 CMD ["node", "apps/web/server.js"]

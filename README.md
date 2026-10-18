@@ -22,9 +22,8 @@ Models come from any **OpenAI-compatible provider**. The default is [OpenRouter]
 
 - **No auth.** Single-tenant by design. The operator is expected to put a reverse proxy with authentication in front of it — see [Security model](#security-model-there-is-no-auth).
 - **No memory.** Agents do not accumulate knowledge between runs.
-- **No scheduling.** Nothing runs an agent for you on a timer or an event.
 
-The last two are [ideas](#ideas), not commitments. Fix drafts — the notes you leave on a run — are the raw material memory would start from.
+The last one is an [idea](#ideas), not a commitment. Fix drafts — the notes you leave on a run — are the raw material memory would start from.
 
 Reviewing a run is the half that is hard to do without a tool: what the agent loaded, which sub-agent it delegated to, what it called, what it stopped to ask permission for — and the note you leave on the exact turn that went wrong.
 
@@ -34,6 +33,8 @@ Reviewing a run is the half that is hard to do without a tool: what the agent lo
 </picture>
 
 Reading every run doesn't scale, so agents can also carry **criteria**: yes/no questions — "did it avoid promising a refund it couldn't confirm?" — that a judge model answers about each recorded run. A fix draft turns into a criterion in one click, checked on the spot against the run it came from. Verdicts the judge is unsure about land in a review queue, your review overrides the judge, and the metrics compare each criterion's pass rate across agent versions, so you can see whether the change you made actually helped. The judge is TypeSafe's Jev — through OpenRouter by default, or straight from TypeSafe or any other host that serves it — which costs a fraction of a cent per run.
+
+Agents can also run on their own: a **schedule** sends one a message every hour, day, weekday, week or month, in your time zone, and each run lands in the same review loop as any other.
 
 One more thing that belongs up here: agentlathe is **built and maintained by one person**, best-effort, with no support channel — read [Project status](#project-status) before you build anything on it.
 
@@ -102,7 +103,7 @@ curl http://localhost:3000/v1/chat/completions \
 
 Each active agent is also its own MCP server at `POST /mcp/agents/{agent-id}`, exposing one tool. Point Claude Desktop, Cursor or any MCP client at it.
 
-The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
+The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 
 ## Documentation
 
@@ -110,7 +111,7 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | The manual: build agents, attach tools, call them, review the runs |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running without Docker, production deployment, reverse proxy, backups |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, evaluation, runner internals |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, evaluation, runner internals |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Scripts, test levels, conventions |
 | [SECURITY.md](SECURITY.md) | Accepted tradeoffs, deferred work, how to report a vulnerability |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and what an upgrade asks of you |
@@ -175,7 +176,6 @@ Where the design is headed, in the order each piece would unlock the next. No da
 
 1. **Replay** — re-run recorded inputs against the current agent version and judge them with the same criteria, to test a change before real traffic does. Today's evaluators only judge runs that already happened.
 2. **Memory** — let an agent carry what it learned across runs, instead of rebuilding context every call.
-3. **Scheduling** — run agents on a timer or an event, not only when someone calls them.
 
 Orthogonal to that chain: **native provider support**. Single-provider setups already connect directly — `PROVIDER_BASE_URL` + `PROVIDER_API_KEY` point the instance at OpenAI, Anthropic's OpenAI-compatible endpoint, or a local Ollama instead of OpenRouter. What remains is native support where a compatibility layer falls short (Anthropic's Messages API), and graceful handling of `/models` endpoints that lack OpenRouter's metadata (context limits, pricing).
 

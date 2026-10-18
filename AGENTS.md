@@ -10,7 +10,7 @@ Working guide for coding agents and anyone about to change this codebase. It rec
 
 A self-hosted workshop for AI agents: define them in a DB, expose each as an OpenAI-compatible model, and **review what they actually did**. See [`README.md`](README.md) for the product framing and [`docs/USAGE.md`](docs/USAGE.md) for what each feature does.
 
-Deliberately absent, in roadmap order: **replay** (re-running recorded inputs against the current agent and judging them; evaluators today only judge runs that already happened), **memory, scheduling** — plus, orthogonal to that chain, **native provider SDKs** (any OpenAI-compatible endpoint already connects via `PROVIDER_BASE_URL`; absent are native Anthropic support and `/models` metadata fallbacks). Also absent: auth (single-tenant by design). Do not add any of them uninvited.
+Deliberately absent, in roadmap order: **replay** (re-running recorded inputs against the current agent and judging them; evaluators today only judge runs that already happened), **memory** — plus, orthogonal to that chain, **native provider SDKs** (any OpenAI-compatible endpoint already connects via `PROVIDER_BASE_URL`; absent are native Anthropic support and `/models` metadata fallbacks). Also absent: auth (single-tenant by design). Do not add any of them uninvited.
 
 ## Commands
 
@@ -55,7 +55,7 @@ Full data model, transports and runner internals: [`docs/ARCHITECTURE.md`](docs/
 
 ### Data model invariants
 
-- **The run is the durable unit.** `agent_runs` records one row per call from any source (`dashboard` | `v1` | `mcp`); `run_transcripts` (1:1, own table, own shorter TTL) holds the messages; `fix_drafts` (FK to run) holds the review notes; `run_evaluations` (FK to run and criterion) holds the judge's verdicts; `agent_runs.agent_version_id` points at the config it ran with. There is no conversation table — a thread is an optional `agent_runs.thread_id`, because `/v1` is stateless and cannot be threaded without the client saying so.
+- **The run is the durable unit.** `agent_runs` records one row per call from any source (`dashboard` | `v1` | `mcp` | `schedule`); `run_transcripts` (1:1, own table, own shorter TTL) holds the messages; `fix_drafts` (FK to run) holds the review notes; `run_evaluations` (FK to run and criterion) holds the judge's verdicts; `agent_runs.agent_version_id` points at the config it ran with. There is no conversation table — a thread is an optional `agent_runs.thread_id`, because `/v1` is stateless and cannot be threaded without the client saying so.
 - Agent → (skills / tools / mcp / sub-agents) relations use **join tables with FK + `ON DELETE CASCADE`**, never `uuid[]` arrays.
 - Deactivation (`is_active=false`) is the normal UI flow; hard-delete cascades and is reserved for deliberate cleanup.
 - An agent composes its tools from three JOIN-resolved sources: HTTP (`agent_tools`), MCP (`agent_mcp_tools`, explicit selection by name — no wildcard), and sub-agents (`agent_sub_agents`, self-referential).
@@ -67,7 +67,7 @@ Full data model, transports and runner internals: [`docs/ARCHITECTURE.md`](docs/
 
 The mechanism is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#metrics-recording). What you must not do:
 
-- **Transports never call `recordAgentRun` / `saveRunTranscript` directly.** `createRunRecorder` (`packages/runner/src/recording.ts`) is the single writer, and it owns both gates: `settings.track_*_runs` decides whether the run row exists, `agents.record_traffic` decides whether the transcript is stored for v1/mcp. No run row means no transcript and nothing to annotate.
+- **Transports never call `recordAgentRun` / `saveRunTranscript` directly.** `createRunRecorder` (`packages/runner/src/recording.ts`) is the single writer, and it owns both gates: `settings.track_*_runs` decides whether the run row exists, `agents.record_traffic` decides whether the transcript is stored for v1/mcp (the Playground and schedules always store it). No run row means no transcript and nothing to annotate.
 - **Never pass stats-collecting callbacks at call level.** `onToolExecutionEnd` / `onStepEnd` go on the `ToolLoopAgent` *constructor* only: constructor and call callbacks BOTH fire, which double-counts. The one legitimate call-level callback is `onToolExecutionStart` in `generateWithApprovals` (`generate-with-approvals.ts`), which reports progress and collects nothing — that is not a violation of this rule.
 - **Automatic evaluation hangs off the recorder's `onTranscriptSaved`**, wired by `createRecorder` (`apps/web/lib/run-recorder.ts`), the only way transports build a recorder. Transports never call `evaluateRun`. It runs in the background, gated on `auto_evaluate`, and its errors are swallowed like recording's: the response never waits for or depends on the judge.
 - **The collector already dedupes denials by tool-call id.** Do not reimplement it. Denials reach the recorder through three different paths depending on how the denial happened; all three are pinned by the `*.sdk.test.ts` suites against the real SDK.
@@ -107,6 +107,18 @@ The mechanism is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#met
 - **MCP** (`/mcp/agents/[id]`): one tool per agent (`ask_{slug}`), with elicitation-based approval when the client supports it, headless auto-deny when it does not.
 - **Agent lookup is centralised in `loadActiveAgent`** (`packages/runner/src/loaders.ts`) and every transport uses it: if the string is a uuid, look up by id; otherwise by **slug (preferred)**, falling back to name. Never compare an arbitrary name against a uuid column, and never query `agents` by hand in a transport.
 
+### Scheduler
+
+The mechanism is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#scheduler). What you must not break:
+
+- **Due occurrences are claimed in Postgres, never in the process.** `SELECT … FOR UPDATE SKIP LOCKED` plus `UNIQUE (schedule_id, nominal_at)` with `ON CONFLICT DO NOTHING` is what lets several replicas run the loop; an in-memory lock or a "leader" flag would quietly run every schedule once per replica. Due and missed are judged against Postgres's `now()`, not the process clock.
+- **Inside a transaction, statements run one after another.** A transaction holds one connection and `pg` deprecates concurrent queries on it, so `Promise.all` over `tx` queries is the exception to "independent awaits → `Promise.all`". Batch into one statement where you can (the claim inserts every occurrence at once).
+- **No retries, no catch-up.** A missed occurrence is skipped, an overlapping one is skipped, a failed one waits for the next; 5 failed or blocked in a row pause the schedule. Interrupted and skipped ones never count as failures.
+- **Scheduled runs go through the same single writer.** `createRecorder({ source: "schedule", scheduleId })` and `generateWithApprovals` with `buildScheduledToolApproval`; the engine never writes `agent_runs` itself.
+- **The loop starts only from `apps/web/instrumentation.ts`**, which must keep nothing but the `NEXT_RUNTIME === "nodejs"` guard and a dynamic import: Turbopack compiles it for Edge too. `register()` runs once per process and hot reload does not rerun it — restart `next dev` after changing scheduler code.
+- **With `NEXT_MANUAL_SIG_HANDLE` set (the runner image sets it), `startScheduler` owns `SIGTERM`/`SIGINT` and must always exit**, even with the loop disabled — Next.js installs no handler of its own, and a process that ignores `SIGTERM` waits for `SIGKILL`.
+- **Next occurrences come only from `apps/web/lib/scheduler/calendar.ts`.** Presets, not cron; `temporal-polyfill` resolves wall-clock times in the schedule's zone. Do not swap in a cron library: the ones measured skipped days at DST changes, and none expresses "day N or the month's last day".
+
 ### Closed decisions (do not re-litigate)
 
 - **No auth**: single-tenant, bind to `127.0.0.1`, auth delegated to the deploy's reverse proxy.
@@ -120,5 +132,5 @@ The mechanism is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#met
 - Caching is opt-in via `"use cache"`. Turbopack is the default bundler. Requires **Node 22+** (`engines.node` is `>=22`).
 - Path alias `@/*` maps to **`apps/web/`**, defined in `apps/web/tsconfig.json` — it only resolves inside `apps/web` (so `@/lib/csrf` is `apps/web/lib/csrf.ts`). There is no `tsconfig.json` at the repo root.
 - The middleware is `apps/web/proxy.ts` (Next 16 renamed it from `middleware.ts`). It runs the CSRF check on every mutating request via `isTrustedRequest` (`apps/web/lib/csrf.ts`), whose host allowlist is `localhost:3000`, `127.0.0.1:3000` and the host of `APP_URL`. Serving the dev server on any other port without setting `APP_URL` makes every POST return 403 — and you will not find the cause by grepping for "middleware".
-- Lazy cleanup of expired rows rides on `after()` from `next/server` via `scheduleRetentionSweep` (`apps/web/lib/retention.ts`), called explicitly from the pages that show run data — no cron, and never hidden inside a read function.
+- Cleanup of expired rows is `runRetentionSweep` (`apps/web/lib/retention.ts`), called explicitly from two places: the pages that show run data, through `after()` via `scheduleRetentionSweep`, and the scheduler's tick about every ten minutes (`apps/web/lib/scheduler/loop.ts`), which has no request scope and so cannot use `after()`. Never hidden inside a read function.
 - After deleting or renaming files, a stale `.next` can keep serving the old module graph; if the dev server errors with "module factory is not available", delete `apps/web/.next`.

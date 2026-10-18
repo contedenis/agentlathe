@@ -365,6 +365,143 @@ describe("db integration (requires Docker)", () => {
     });
   });
 
+  describe("schedules and their occurrences", () => {
+    async function makeSchedule(agentName: string) {
+      const [agent] = await db
+        .insert(schema.agents)
+        .values({
+          name: agentName,
+          slug: agentSlug(agentName),
+          model: "test/model",
+        })
+        .returning();
+      const [schedule] = await db
+        .insert(schema.schedules)
+        .values({
+          agentId: agent.id,
+          name: "Daily digest",
+          frequency: "daily",
+          timeOfDay: "09:00",
+          timezone: "Europe/Madrid",
+          input: "Summarize yesterday.",
+        })
+        .returning();
+      return { agent, schedule };
+    }
+
+    const nominalAt = new Date("2026-10-19T07:00:00Z");
+
+    it("deleting the agent removes its schedules and their occurrences", async () => {
+      const { agent, schedule } = await makeSchedule("Schedule cascade agent");
+      await db
+        .insert(schema.scheduleOccurrences)
+        .values({ scheduleId: schedule.id, nominalAt, status: "succeeded" });
+
+      await db.delete(schema.agents).where(eq(schema.agents.id, agent.id));
+
+      expect(
+        await db
+          .select()
+          .from(schema.scheduleOccurrences)
+          .where(eq(schema.scheduleOccurrences.scheduleId, schedule.id)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(schema.schedules)
+          .where(eq(schema.schedules.id, schedule.id)),
+      ).toHaveLength(0);
+    });
+
+    it("deleting a schedule keeps its runs, and deleting a run keeps its occurrence", async () => {
+      const { agent, schedule } = await makeSchedule("Schedule runs agent");
+      const [run] = await db
+        .insert(schema.agentRuns)
+        .values({
+          agentId: agent.id,
+          source: "schedule",
+          scheduleId: schedule.id,
+          durationMs: 5,
+        })
+        .returning();
+      const [other] = await db
+        .insert(schema.schedules)
+        .values({ ...schedule, id: undefined, name: "Other" })
+        .returning();
+      const [occurrence] = await db
+        .insert(schema.scheduleOccurrences)
+        .values({
+          scheduleId: other.id,
+          nominalAt,
+          status: "succeeded",
+          runId: run.id,
+        })
+        .returning();
+
+      await db
+        .delete(schema.schedules)
+        .where(eq(schema.schedules.id, schedule.id));
+      const [kept] = await db
+        .select()
+        .from(schema.agentRuns)
+        .where(eq(schema.agentRuns.id, run.id));
+      expect(kept.scheduleId).toBeNull();
+
+      await db.delete(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+      const [orphan] = await db
+        .select()
+        .from(schema.scheduleOccurrences)
+        .where(eq(schema.scheduleOccurrences.id, occurrence.id));
+      expect(orphan.runId).toBeNull();
+    });
+
+    it("allows one occurrence per schedule and nominal time", async () => {
+      const { schedule } = await makeSchedule("Occurrence uniqueness agent");
+      await db
+        .insert(schema.scheduleOccurrences)
+        .values({ scheduleId: schedule.id, nominalAt, status: "running" });
+
+      await expect(
+        db
+          .insert(schema.scheduleOccurrences)
+          .values({ scheduleId: schedule.id, nominalAt, status: "running" }),
+      ).rejects.toMatchObject({ cause: { code: "23505" } });
+    });
+
+    it("rejects a trigger the presets cannot express", async () => {
+      const { schedule } = await makeSchedule("Schedule constraint agent");
+      const base = { ...schedule, id: undefined };
+      const invalid = [
+        { frequency: "every_minute" },
+        { timeOfDay: "9:00" },
+        { timeOfDay: "24:00" },
+        { frequency: "weekly", weekday: null },
+        { frequency: "daily", weekday: 1 },
+        { frequency: "weekly", weekday: 7 },
+        { frequency: "monthly", startDate: null },
+        { consecutiveFailures: -1 },
+      ];
+
+      for (const values of invalid) {
+        await expect(
+          db.insert(schema.schedules).values({ ...base, ...values }),
+        ).rejects.toMatchObject({ cause: { code: "23514" } });
+      }
+      await expect(
+        db.insert(schema.schedules).values({
+          ...base,
+          frequency: "monthly",
+          startDate: "2026-01-31",
+        }),
+      ).resolves.toBeDefined();
+      await expect(
+        db
+          .insert(schema.scheduleOccurrences)
+          .values({ scheduleId: schedule.id, nominalAt, status: "queued" }),
+      ).rejects.toMatchObject({ cause: { code: "23514" } });
+    });
+  });
+
   describe("seed", () => {
     it("inserts the example agent linked to its skill and tool without violating constraints, and re-running it does not duplicate anything", async () => {
       const { seed } = await import("../../src/seed");

@@ -8,6 +8,7 @@ import { RunWorkspace } from "@/components/run-workspace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { VersionConfigDialog } from "@/components/version-dialogs";
 import { toFixDrafts } from "@/lib/fix-drafts";
+import { formatInZone } from "@/lib/format";
 import { getRunForReview } from "@/lib/queries";
 import { sourceLabel } from "@/lib/run-sources";
 import { toTranscriptMessages } from "@/lib/transcript";
@@ -84,6 +85,43 @@ export default async function RunDetailPage({
           )}
         </div>
       </div>
+
+      {run.source === "schedule" && (
+        <p className="text-sm text-muted-foreground lg:shrink-0">
+          Scheduled
+          {run.scheduleId && run.scheduleName ? (
+            <>
+              {" · "}
+              <Link
+                href={`/schedules/${run.scheduleId}`}
+                className="text-foreground hover:underline"
+              >
+                {run.scheduleName}
+              </Link>
+            </>
+          ) : (
+            " · schedule deleted"
+          )}
+          {run.scheduledFor &&
+            run.scheduleStartedAt &&
+            run.scheduleTimezone && (
+              <>
+                {" · due "}
+                <span className="font-mono">
+                  {formatInZone(run.scheduledFor, run.scheduleTimezone)}
+                </span>
+                {", started "}
+                <span className="font-mono">
+                  {new Intl.DateTimeFormat("en-US", {
+                    timeZone: run.scheduleTimezone,
+                    timeStyle: "medium",
+                    hourCycle: "h23",
+                  }).format(run.scheduleStartedAt)}
+                </span>
+              </>
+            )}
+        </p>
+      )}
 
       {run.status === "error" && (
         <Alert variant="destructive" className="lg:shrink-0">

@@ -6,13 +6,16 @@ export {
 // Re-exported so apps/web can validate the chat body without depending on "ai".
 export type { UIMessage } from "ai";
 export { safeValidateUIMessages } from "ai";
-export { buildHeadlessToolApproval } from "./approval";
+export {
+  buildHeadlessToolApproval,
+  buildScheduledToolApproval,
+} from "./approval";
 export {
   type AgentProgress,
   generateWithApprovals,
   type PendingApproval,
 } from "./generate-with-approvals";
-export { PROVIDER_BASE_URL } from "./helpers";
+export { buildAuth, PROVIDER_BASE_URL } from "./helpers";
 export { compileInputSchema } from "./input-schema";
 export { type AgentRow, loadActiveAgent } from "./loaders";
 export {

@@ -61,7 +61,18 @@ The [`Dockerfile`](../Dockerfile) is a multi-stage build with two consumable tar
 
 **Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, and transcripts **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
 
-**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, and run evaluations that finish in the background after the response has gone out. A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
+**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, run evaluations that finish in the background after the response has gone out, and the [scheduler](#the-scheduler). A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
+
+## The scheduler
+
+Every app process runs a scheduler loop alongside the server: every 30 seconds it starts the [schedules](USAGE.md#schedules) that are due, and every ten minutes or so it sweeps expired runs and transcripts. There is no separate worker to deploy.
+
+- **It needs a long-lived process.** Schedules only fire while an app process is up. A schedule that came due while none was running is skipped, not caught up.
+- **Several replicas are fine.** Due schedules are claimed in Postgres, so two processes never start the same occurrence. To keep the scheduler out of some replicas — a web-only replica, a staging copy pointed at production data — set `SCHEDULER_ENABLED=false` on them. The Schedules page warns when no process has ticked in the last 90 seconds.
+- **Give it time to stop.** On `SIGTERM` the app stops claiming, waits up to 20 seconds for scheduled runs in progress, then aborts the rest and marks them interrupted. The runner image sets `NEXT_MANUAL_SIG_HANDLE=true` so that Next.js does not exit before that, and the compose stack sets `stop_grace_period: 30s` (Docker's default is 10 seconds before `SIGKILL`). Under another orchestrator, allow at least 30 seconds. While it drains, the app still serves HTTP, and requests in flight when it exits are cut.
+- **Without Docker,** run `next start` or the standalone `server.js` with `NEXT_MANUAL_SIG_HANDLE=true` in the environment (not in a `.env` file, which is read too late) to get the same drain. Without it, Next.js exits at once and runs in progress end up marked interrupted three minutes later.
+
+In development `pnpm dev` runs the scheduler too, against whatever database `apps/web/.env.local` points at; set `SCHEDULER_ENABLED=false` there to keep it quiet. Editing the scheduler's code needs a restart of the dev server: hot reload does not restart the loop. The browser E2E suite starts its server with the scheduler off.
 
 ## Binding and CSRF
 
