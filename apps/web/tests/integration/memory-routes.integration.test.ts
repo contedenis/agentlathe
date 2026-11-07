@@ -51,7 +51,9 @@ async function makeAgent(name: string) {
 
 describe("memory routes (requires Docker)", () => {
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
 
     dbModule = await import("@agentlathe/db");
@@ -247,7 +249,7 @@ describe("memory routes (requires Docker)", () => {
     expect(await ownedStores(agent.id)).toEqual([]);
   });
 
-  it("counts the runs of the last week that ran without their memory, by message, leaving out other warnings", async () => {
+  it("counts the runs of the last week that ran without their memory or read a collection by search, by message, leaving out other warnings", async () => {
     const agent = await makeAgent("warned agent");
     const warning = (code: string) => [{ code, message: code }];
     await dbModule.db.insert(dbModule.agentRuns).values([
@@ -269,6 +271,12 @@ describe("memory routes (requires Docker)", () => {
         durationMs: 1,
         warnings: warning("memory_missing_key"),
       },
+      {
+        agentId: agent.id,
+        source: "v1",
+        durationMs: 1,
+        warnings: warning("knowledge_too_large"),
+      },
       { agentId: agent.id, source: "v1", durationMs: 1 },
       {
         agentId: agent.id,
@@ -289,7 +297,11 @@ describe("memory routes (requires Docker)", () => {
 
     expect(
       Object.fromEntries(counts.map((row) => [row.message, row.runs])),
-    ).toEqual({ memory_missing_subject: 2, memory_missing_key: 1 });
+    ).toEqual({
+      memory_missing_subject: 2,
+      memory_missing_key: 1,
+      knowledge_too_large: 1,
+    });
   });
 
   it("approves and rejects what the agent proposed to a store that needs approval", async () => {

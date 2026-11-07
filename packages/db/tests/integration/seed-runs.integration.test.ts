@@ -27,7 +27,9 @@ describe("seedRuns (requires Docker)", () => {
     process.env.SEED_RUN_DAYS = String(SEED_RUN_DAYS);
     process.env.SEED_RUNS_PER_DAY = "4";
 
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
 
     pool = new Pool({ connectionString: container.getConnectionUri() });

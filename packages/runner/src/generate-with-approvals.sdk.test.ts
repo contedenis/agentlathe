@@ -9,6 +9,7 @@ vi.mock("./memory", async (importOriginal) => ({
 }));
 vi.mock("./loaders", () => ({
   loadAgentConfig: vi.fn(),
+  loadKnowledgeCollections: vi.fn(async () => []),
   loadSkills: vi.fn(async () => []),
 }));
 vi.mock("./tools", () => ({ buildTools: vi.fn() }));

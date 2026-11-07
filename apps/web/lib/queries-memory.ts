@@ -256,7 +256,7 @@ export async function countRunWarnings(agentId: string) {
           agentRuns.createdAt,
           sql`now() - make_interval(days => ${WARNING_WINDOW_DAYS})`,
         ),
-        sql`w.value->>'code' in ('memory_missing_subject', 'memory_missing_key', 'memory_key_mismatch')`,
+        sql`w.value->>'code' in ('memory_missing_subject', 'memory_missing_key', 'memory_key_mismatch', 'knowledge_too_large')`,
       ),
     )
     .groupBy(sql`w.value->>'message'`);

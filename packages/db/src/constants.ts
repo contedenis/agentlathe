@@ -12,6 +12,7 @@ export const AGENT_RUN_CALL_KINDS = [
   "sub_agent",
   "skill",
   "memory",
+  "knowledge",
 ] as const;
 export type AgentRunCallKind = (typeof AGENT_RUN_CALL_KINDS)[number];
 
@@ -149,6 +150,37 @@ export function memoryPartitionKey(
   if (scope === "custom") return memoryKey;
   return subjectId;
 }
+
+export const KNOWLEDGE_DOCUMENT_STATUSES = [
+  "pending",
+  "processing",
+  "ready",
+  "failed",
+] as const;
+export type KnowledgeDocumentStatus =
+  (typeof KNOWLEDGE_DOCUMENT_STATUSES)[number];
+
+export const KNOWLEDGE_MEDIA_TYPES = [
+  "application/pdf",
+  "text/markdown",
+  "text/plain",
+] as const;
+export type KnowledgeMediaType = (typeof KNOWLEDGE_MEDIA_TYPES)[number];
+
+export const KNOWLEDGE_MODES = ["search", "always"] as const;
+export type KnowledgeMode = (typeof KNOWLEDGE_MODES)[number];
+
+export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+export const CHUNK_SIZE = 800;
+export const CHUNK_OVERLAP = 150;
+export const SEARCH_RESULTS = 5;
+export const ALWAYS_CONTEXT_SHARE = 0.25;
+export const CHARS_PER_TOKEN = 4;
+export const DEFAULT_CONTEXT_LIMIT = 128_000;
+export const PROCESSING_ATTEMPTS = 3;
+export const PROCESSING_STALE_MINUTES = 10;
+export const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+export const PAGE_BREAK = "\f";
 
 export const DEFAULT_AGENT_RUN_TTL_DAYS = 90;
 export const MAX_AGENT_RUN_TTL_DAYS = 3650;

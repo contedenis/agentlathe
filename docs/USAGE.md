@@ -4,7 +4,7 @@ How to build agents in agentlathe and call them from the outside. If you have no
 
 ## Agents
 
-An agent is a name, a model slug, an optional system prompt, and a step budget. Everything else (tools, skills, sub-agents, MCP tools) is attached by relation. `maxSteps` defaults to `20` and caps the agent's own steps — shared across approval rounds, not per round, and a sub-agent's steps count against the sub-agent's budget, not its caller's; the name is unique, because `/v1` lets callers address an agent by it.
+An agent is a name, a model slug, an optional system prompt, and a step budget. Everything else (tools, skills, sub-agents, MCP tools, knowledge collections) is attached by relation. `maxSteps` defaults to `20` and caps the agent's own steps — shared across approval rounds, not per round, and a sub-agent's steps count against the sub-agent's budget, not its caller's; the name is unique, because `/v1` lets callers address an agent by it.
 
 In the UI: **Agents → New agent**. The model dropdown is populated from the provider's `/models` catalog — OpenRouter's by default.
 
@@ -210,15 +210,70 @@ curl -X POST http://localhost:3000/api/subjects/forget \
   -d '{ "subjectId": "customer-123" }'
 ```
 
+## Knowledge
+
+Knowledge is documents an agent can consult. In the UI: **Knowledge → New collection**, then **Upload documents** on the collection's page.
+
+A collection has a unique name and a **description**. The description is what the agent reads in its instructions to decide when to search the collection, so say what it holds and when it helps: "Refund, shipping and warranty policies, current as of this year" works better than "Policies".
+
+Documents can be **PDF** (with a text layer), **Markdown** (`.md`, `.markdown`) or **plain text** (`.txt`), up to 20 MB each. The type is checked by the extension and by the content: a `.pdf` must start like a PDF, and Markdown and text must be UTF-8. There is no CSV, no images, no OCR and no import from a URL. The original file is kept and can be downloaded from the document's page.
+
+**Processing.** An uploaded document is processed in the background, starting right after the upload: its text is extracted, split into passages of about 800 characters that overlap by about 150, and each passage is embedded with `EMBEDDING_MODEL` through the same provider as the agents (see [Embedding model](#embedding-model)). The collection's page lists every document as **waiting**, **processing**, **ready** or **failed**, with its pages and size. A PDF where fewer than half the pages have text fails at once with "No text found. Is it a scanned PDF?". A failure from the provider is retried twice, two minutes apart, and the document then fails; it shows why and can be retried once you fixed the cause (a key, a model, a quota). A document that cannot be read fails at once and is not offered a retry: upload a readable version instead. The document's page shows its extracted text, page by page, up to its first 100,000 characters: it is what agents search and read, so if something is missing or garbled there, it is missing for the agent too.
+
+Processing runs in every app process, two documents at a time. A document left in processing by a process that stopped is taken over after 10 minutes; a process that stops gracefully with its scheduler on gives its documents back without spending an attempt. Retries, interrupted documents and the re-embedding after a model change are picked up by the [scheduler](#schedules), every 30 seconds, and by the next upload or retry: with `SCHEDULER_ENABLED=false` on every process, documents are processed only right after an upload or a retry, and the collection's page warns about it.
+
+**Attaching to an agent.** The agent form has a **Knowledge** card: pick collections from **Add a collection**, which searches them by name, and remove one with its ×. Each attached collection is used in one of two modes:
+
+| Mode | What the agent gets |
+|---|---|
+| **Search** (default) | A `search_knowledge` tool, and a list of the collections it can search, with their descriptions, at the end of its instructions |
+| **Always read** | The text of every document of the collection at the end of its instructions, on every run |
+
+`search_knowledge` takes a `query` and returns the five passages closest in meaning to it, from all the agent's searched collections, each with its collection, document and page (PDF only). It finds meaning, not exact text: a part number or an error code may not come back first. If the embedding provider fails during a search, the tool returns the error to the model and the run goes on. The run page shows each search with its query and the passages it returned, and each one is recorded as a call of kind `knowledge`.
+
+**Always read** is for short documents the agent must always keep in mind. They are framed in the instructions as reference material — data, not instructions. The collections an agent reads whole share a quarter of the model's context, counting about four characters per token (128,000 tokens when the provider does not report the model's context); the agent form shows how much of it they take. A collection that does not fit is searched instead for that run, and the run carries a warning, shown on the run page and counted on the agent page under "Runs that ran without part of their context". Both need the run recorded: `/v1` and MCP runs are not recorded by default (see [Metrics](#metrics)).
+
+If the agent searches a collection and a tool of its own already resolves to `search_knowledge`, that tool is renamed `search_knowledge_2`, keeping its approval gate. Sub-agents use their own collections, not their caller's. An agent's [version](#metrics) includes the name, description and mode of each attached collection, not its documents: adding a document changes what the agent finds without creating a new version.
+
+Deleting a document deletes its file, its text and its passages, and agents stop finding it from their next run. Deleting a collection deletes its documents and detaches it from every agent.
+
+```bash
+curl -X POST http://localhost:3000/api/knowledge/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Support policies",
+    "description": "Refund, shipping and warranty policies."
+  }'
+
+# one file per request, in a multipart "file" field
+curl -X POST http://localhost:3000/api/knowledge/collections/<collection-uuid>/documents \
+  -F "file=@policies.pdf"
+
+# attach it to an agent; mode is "search" or "always"
+curl -X PATCH http://localhost:3000/api/agents/<agent-uuid> \
+  -H "Content-Type: application/json" \
+  -d '{ "knowledge": [{ "collectionId": "<collection-uuid>", "mode": "search" }] }'
+```
+
+`knowledge` replaces the agent's whole list of collections. The other `/api/knowledge` routes are the dashboard's own and may change between versions.
+
+### Embedding model
+
+`EMBEDDING_MODEL` (default `openai/text-embedding-3-small`) is called through `PROVIDER_BASE_URL` with `PROVIDER_API_KEY`, so the provider must serve an OpenAI-compatible embeddings endpoint. OpenRouter does; for another provider, set a model it serves.
+
+Changing it re-embeds every document with the new model, reusing the text already extracted. Until a document is re-embedded, search does not find it (agents that read its collection whole are not affected), and the collection's page says so. Every app process must use the same `EMBEDDING_MODEL`: two processes with different values keep re-embedding each other's documents.
+
+Search is the same with or without the Postgres [pgvector](https://github.com/pgvector/pgvector) extension, and returns the same passages; with it, it is faster (about 40 ms against 1 s over 10,000 passages in our measurements). The compose stack includes it; see [DEPLOYMENT.md](DEPLOYMENT.md#running-without-docker) for a Postgres of your own.
+
 ## Metrics
 
 Three tables, deliberately separated:
 
 - **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp` / `schedule`), status, `thread_id`, `subject_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
-- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`, `memory`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
+- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`, `memory`, `knowledge`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
 - **`run_transcripts`** — the actual input and output messages, keyed 1:1 on the run.
 
-Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents, memory settings) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents and memory. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
+Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents, memory settings, knowledge collections and their modes) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents, memory and knowledge. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
 
 Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
 
@@ -232,7 +287,7 @@ Retention is TTL-based and swept lazily, when a page that shows runs loads and a
 
 **Evaluation.** When an agent has [criteria](#criteria), its metrics page (`/metrics/[id]`) has an Evaluation section for the selected range, and `/metrics` shows the overall pass rate, the runs awaiting review (all of them, not only those in the range, linking to the same queue in the runs list) and a pass-rate column per agent. Everything follows the criteria counting rules: your review overrides the judge, unreviewed needs-review, not-applicable, skipped and errored verdicts stay out of the rate, and only verdicts given to the criterion's current question count.
 
-- **Evaluation by agent version** — one row per active criterion, one column per agent version that was judged in the range, ordered by when each version last ran in the range (the newest is highlighted; a version is labelled by the first 8 characters of its hash, the date it first appeared and its last run). A version that ran in several periods, for example after you reverted a change, is one column, and the newest is whichever ran most recently. Each cell shows the pass rate, `n` (the verdicts it is based on) and how many are still to review; a dash means no data. To answer "did my last change help?", read the newest column against the one before it: next to the newest cell, the change in points appears only when both versions have at least 5 judged verdicts. With fewer it says "too few verdicts to compare" instead, because a swing of a few runs is noise. Under every version but the first, a one-line summary says what changed against the column to its left (the same pair the change in points compares), and **What changed** opens the diff: model, step limit, a line diff of the prompt, and the skills, tools, MCP servers, sub-agents and memory that were added, removed or edited. Entities are matched by name, so a rename reads as one removed and one added. A change inside a sub-agent is named but not detailed; that sub-agent's own metrics page shows it. Inactive criteria are left out.
+- **Evaluation by agent version** — one row per active criterion, one column per agent version that was judged in the range, ordered by when each version last ran in the range (the newest is highlighted; a version is labelled by the first 8 characters of its hash, the date it first appeared and its last run). A version that ran in several periods, for example after you reverted a change, is one column, and the newest is whichever ran most recently. Each cell shows the pass rate, `n` (the verdicts it is based on) and how many are still to review; a dash means no data. To answer "did my last change help?", read the newest column against the one before it: next to the newest cell, the change in points appears only when both versions have at least 5 judged verdicts. With fewer it says "too few verdicts to compare" instead, because a swing of a few runs is noise. Under every version but the first, a one-line summary says what changed against the column to its left (the same pair the change in points compares), and **What changed** opens the diff: model, step limit, a line diff of the prompt, and the skills, tools, MCP servers, sub-agents, memory and knowledge collections that were added, removed or edited. Entities are matched by name, so a rename reads as one removed and one added. A change inside a sub-agent is named but not detailed; that sub-agent's own metrics page shows it. Inactive criteria are left out.
 - **Pass rate over time** — the daily pass rate of each criterion, on days that have judged verdicts. Dashed vertical lines mark the day a new agent version first ran.
 - **Judge vs human** — among verdicts you reviewed that the judge had called pass or fail, the share where you kept its verdict (it needs at least 5 reviews to show a percentage), and how you resolved the ones the judge left as needs review.
 
@@ -414,5 +469,7 @@ Retention is TTL-based and swept lazily (on page loads, and every ten minutes or
 **Evaluated transcripts leave the instance.** When an agent has active criteria, each run that is evaluated (or previewed against a draft criterion) is sent to the judge as text: TypeSafe's Jev, through OpenRouter by default or the host `JUDGE_URL` names. Agents without criteria send nothing, and switching off "Evaluate new runs automatically" limits it to the runs you evaluate by hand.
 
 **Memory has no TTL.** Entries and every past version stay until you delete the memory or its agent: deleting an entry hides it but keeps its history, which can be restored. Forgetting a subject removes that subject's memory and transcripts. Like transcripts, memory is not redacted: the agent's tools refuse an entry that looks like a credential, and nothing else is checked.
+
+**Knowledge documents leave the instance to be indexed.** The whole text of every document you upload is sent to the embedding provider, again whenever `EMBEDDING_MODEL` changes, and what agents find or read whole goes to their model with each run. Documents, their text and their passages have no TTL and no redaction, and anyone who reaches the dashboard can read and download them. A document can also carry text written to steer the agent: see [SECURITY.md](../SECURITY.md#knowledge-is-sent-out-to-be-indexed-and-read-as-data).
 
 The reasoning behind these defaults, and the tradeoffs they accept, are in [SECURITY.md](../SECURITY.md).

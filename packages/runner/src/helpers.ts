@@ -1,4 +1,8 @@
-import { SECRET_ENV_PREFIX } from "@agentlathe/db";
+import {
+  DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_EMBEDDING_MODEL,
+  SECRET_ENV_PREFIX,
+} from "@agentlathe/db";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ToolSet } from "ai";
 
@@ -13,6 +17,14 @@ const openrouter = createOpenAICompatible({
 
 export function buildProvider(model: string) {
   return openrouter(model);
+}
+
+export function embeddingModelId(): string {
+  return process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
+}
+
+export function buildEmbeddingModel() {
+  return openrouter.embeddingModel(embeddingModelId());
 }
 
 export function buildAuth(authConfig: unknown): Record<string, string> {
@@ -39,7 +51,6 @@ export function buildAuth(authConfig: unknown): Record<string, string> {
 }
 
 const OPENROUTER_MODELS_URL = `${PROVIDER_BASE_URL}/models`;
-const DEFAULT_CONTEXT_LIMIT = 128_000;
 
 interface OpenRouterModelsResponse {
   data?: Array<{ id: string; context_length?: number }>;

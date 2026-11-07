@@ -21,7 +21,9 @@ let db: ReturnType<typeof drizzle<typeof schema>>;
 
 describe("db integration (requires Docker)", () => {
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
 
     pool = new Pool({ connectionString: container.getConnectionUri() });
@@ -806,6 +808,48 @@ describe("db integration (requires Docker)", () => {
       expect(await db.select().from(schema.schedules)).toHaveLength(
         seeded.length,
       );
+    });
+
+    it("adds the support policies collection once, waiting to be indexed and attached to the support coordinator", async () => {
+      const { seedDemo } = await import("../../src/seed-demo");
+      await seedDemo();
+      await seedDemo();
+
+      const documents = await db
+        .select({
+          collection: schema.knowledgeCollections.name,
+          filename: schema.knowledgeDocuments.filename,
+          status: schema.knowledgeDocuments.status,
+          bytes: schema.knowledgeFiles.bytes,
+        })
+        .from(schema.knowledgeDocuments)
+        .innerJoin(
+          schema.knowledgeCollections,
+          eq(
+            schema.knowledgeCollections.id,
+            schema.knowledgeDocuments.collectionId,
+          ),
+        )
+        .innerJoin(
+          schema.knowledgeFiles,
+          eq(schema.knowledgeFiles.documentId, schema.knowledgeDocuments.id),
+        );
+      expect(documents).toHaveLength(1);
+      expect(documents[0]).toMatchObject({
+        collection: "Support policies",
+        filename: "support-policies.md",
+        status: "pending",
+      });
+      expect(documents[0].bytes.toString()).toContain("Refunds over $500");
+
+      const links = await db
+        .select({ agent: schema.agents.name, mode: schema.agentKnowledge.mode })
+        .from(schema.agentKnowledge)
+        .innerJoin(
+          schema.agents,
+          eq(schema.agents.id, schema.agentKnowledge.agentId),
+        );
+      expect(links).toEqual([{ agent: "Support coordinator", mode: "search" }]);
     });
   });
 });

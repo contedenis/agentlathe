@@ -101,7 +101,7 @@ describe("AgentForm", () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
 
-    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -132,7 +132,7 @@ describe("AgentForm", () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
 
-    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -153,10 +153,77 @@ describe("AgentForm", () => {
     expect(body).toMatchObject({ recordTraffic: true, autoEvaluate: false });
   });
 
+  it("attaches collections to search, and warns when the collections read whole pass a quarter of the context", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[
+          {
+            id: "c1",
+            name: "Policies",
+            description: "HR policies.",
+            chars: 600_000,
+          },
+          { id: "c2", name: "Release notes", description: "", chars: 0 },
+        ]}
+        models={[]}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "My Agent");
+    await user.type(screen.getByLabelText("Model"), "openrouter/model");
+    expect(
+      screen.getByText(
+        "No collections attached. The agent answers without documents.",
+      ),
+    ).toBeInTheDocument();
+    await user.type(
+      screen.getByRole("combobox", { name: "Add a collection" }),
+      "pol{Enter}",
+    );
+    expect(apiRequest).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("combobox", { name: "Add a collection" }),
+    ).toHaveAttribute("placeholder", "Add a collection (1 available)…");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    const body = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(body.knowledge).toEqual([{ collectionId: "c1", mode: "search" }]);
+
+    await user.click(
+      screen.getByRole("combobox", { name: "How the agent uses Policies" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Always read" }),
+    );
+    expect(
+      screen.getByText(/Read whole: about 150,000 tokens of the 32,000/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/runs search the collections that do not fit instead/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const second = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[1][1] as RequestInit).body as string,
+    );
+    expect(second.knowledge).toEqual([{ collectionId: "c1", mode: "always" }]);
+
+    await user.click(screen.getByRole("button", { name: "Remove Policies" }));
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    const third = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[2][1] as RequestInit).body as string,
+    );
+    expect(third.knowledge).toEqual([]);
+  });
+
   it("gives the agent one memory, with the default settings", async () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
-    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -182,7 +249,7 @@ describe("AgentForm", () => {
   it("asks for the x-memory-key value and a purpose for a memory with a custom key", async () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
-    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -224,7 +291,7 @@ describe("AgentForm", () => {
   it("rejects a slug with characters outside the allowed pattern before submitting", async () => {
     const user = userEvent.setup();
 
-    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");

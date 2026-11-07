@@ -4,6 +4,10 @@ import { PageHeader } from "@/components/page-header";
 import { memoryConfigOf } from "@/lib/memory-settings";
 import { getOpenRouterModels } from "@/lib/openrouter-models";
 import { getAgentDetail, getAgentFormCatalogs } from "@/lib/queries";
+import {
+  listAgentKnowledge,
+  listCollectionOptions,
+} from "@/lib/queries-knowledge";
 
 export default async function EditAgentPage({
   params,
@@ -12,9 +16,11 @@ export default async function EditAgentPage({
 }) {
   const { id } = await params;
 
-  const [agent, catalogs, models] = await Promise.all([
+  const [agent, catalogs, collections, knowledge, models] = await Promise.all([
     getAgentDetail(id),
     getAgentFormCatalogs(id),
+    listCollectionOptions(),
+    listAgentKnowledge(id),
     getOpenRouterModels(),
   ]);
   if (!agent) notFound();
@@ -28,6 +34,7 @@ export default async function EditAgentPage({
       />
       <AgentForm
         catalogs={catalogs}
+        collections={collections}
         models={models}
         initial={{
           id: agent.id,
@@ -43,6 +50,10 @@ export default async function EditAgentPage({
           toolIds: agent.tools.map((t) => t.id),
           subAgentIds: agent.subAgents.map((a) => a.id),
           memory: memoryConfigOf(agent.memoryStores),
+          knowledge: knowledge.map(({ collectionId, mode }) => ({
+            collectionId,
+            mode,
+          })),
           mcpTools: agent.mcpTools.flatMap((group) =>
             group.tools.map((tool) => ({
               serverId: group.serverId,

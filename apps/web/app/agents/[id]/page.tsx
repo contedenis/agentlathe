@@ -15,12 +15,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { KNOWLEDGE_MODE_LABEL } from "@/lib/knowledge-modes";
 import { MEMORY_SCOPE_LABEL } from "@/lib/memory-rules";
 import {
   getAgentCriteria,
   getAgentDetail,
   getCriteriaCopySources,
 } from "@/lib/queries";
+import { listAgentKnowledge } from "@/lib/queries-knowledge";
 import { countRunWarnings, WARNING_WINDOW_DAYS } from "@/lib/queries-memory";
 import { listAgentSchedules } from "@/lib/queries-schedules";
 import { describeTrigger } from "@/lib/scheduler/calendar";
@@ -55,14 +57,21 @@ export default async function AgentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [agent, criteriaData, copySources, agentSchedules, runWarnings] =
-    await Promise.all([
-      getAgentDetail(id),
-      getAgentCriteria(id),
-      getCriteriaCopySources(id),
-      listAgentSchedules(id),
-      countRunWarnings(id),
-    ]);
+  const [
+    agent,
+    criteriaData,
+    copySources,
+    agentSchedules,
+    runWarnings,
+    knowledge,
+  ] = await Promise.all([
+    getAgentDetail(id),
+    getAgentCriteria(id),
+    getCriteriaCopySources(id),
+    listAgentSchedules(id),
+    countRunWarnings(id),
+    listAgentKnowledge(id),
+  ]);
   if (!agent) notFound();
   const usedMemories = agent.memoryStores.filter(
     (store) => store.isActive || store.scope === "custom",
@@ -104,7 +113,7 @@ export default async function AgentDetailPage({
       {runWarnings.length > 0 && (
         <Alert>
           <TriangleAlertIcon />
-          <AlertTitle>Runs that ran without their memory</AlertTitle>
+          <AlertTitle>Runs that ran without part of their context</AlertTitle>
           <AlertDescription>
             <ul>
               {runWarnings.map((warning) => (
@@ -191,6 +200,29 @@ export default async function AgentDetailPage({
                                   {!store.isActive && " (inactive)"}
                                 </span>
                               )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </dd>
+                    <dt className="text-muted-foreground">Knowledge</dt>
+                    <dd>
+                      {knowledge.length === 0 ? (
+                        "None"
+                      ) : (
+                        <ul className="flex flex-col gap-0.5">
+                          {knowledge.map((collection) => (
+                            <li key={collection.collectionId}>
+                              <Link
+                                href={`/knowledge/${collection.collectionId}`}
+                                className="hover:underline"
+                              >
+                                {collection.name}
+                              </Link>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                · {KNOWLEDGE_MODE_LABEL[collection.mode]}
+                              </span>
                             </li>
                           ))}
                         </ul>

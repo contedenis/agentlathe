@@ -170,6 +170,14 @@ describe("assembleCapabilities — configured vs actually used", () => {
     expect(row).toMatchObject({ kind: "memory", configured: true, calls: 2 });
   });
 
+  it("counts search_knowledge as plugged in: it comes with the collections", () => {
+    const [row] = assembleCapabilities(
+      [],
+      [{ ...stats("search_knowledge", 1), kind: "knowledge" }],
+    );
+    expect(row).toMatchObject({ kind: "knowledge", configured: true });
+  });
+
   it("sorts by activity (calls + denied) with display-name ties", () => {
     const result = assembleCapabilities(
       [

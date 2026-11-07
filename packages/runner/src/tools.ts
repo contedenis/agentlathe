@@ -21,7 +21,13 @@ import { compileInputSchema, describeSchemaErrors } from "./input-schema";
 import { loadMcpServers, loadSubAgents, type McpServerGroup } from "./loaders";
 import type { AgentRunStats } from "./recording";
 
-export type ToolKind = "tool" | "mcp" | "sub_agent" | "skill" | "memory";
+export type ToolKind =
+  | "tool"
+  | "mcp"
+  | "sub_agent"
+  | "skill"
+  | "memory"
+  | "knowledge";
 
 const MAX_TOOL_RESPONSE_BYTES = 256 * 1024;
 const TRUNCATION_SUFFIX = "[truncated]";

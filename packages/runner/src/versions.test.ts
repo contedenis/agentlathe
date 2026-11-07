@@ -362,6 +362,32 @@ describe("agentConfigSnapshot / hashSnapshot", () => {
     expect(hashSnapshot(editedPurpose)).not.toBe(hashSnapshot(withStore));
   });
 
+  it("adds knowledge collections, without their content, only to agents that have them", () => {
+    const collection = {
+      id: "k",
+      name: "Policies",
+      description: "Company policies.",
+      mode: "search" as const,
+    };
+    const withKnowledge = agentConfigSnapshot({
+      ...baseConfig(),
+      knowledge: [collection],
+    });
+    const alwaysRead = agentConfigSnapshot({
+      ...baseConfig(),
+      knowledge: [{ ...collection, mode: "always" }],
+    });
+
+    expect(agentConfigSnapshot(baseConfig())).not.toHaveProperty("knowledge");
+    expect(
+      hashSnapshot(agentConfigSnapshot({ ...baseConfig(), knowledge: [] })),
+    ).toBe(hashSnapshot(agentConfigSnapshot(baseConfig())));
+    expect(withKnowledge.knowledge).toEqual([
+      { name: "Policies", description: "Company policies.", mode: "search" },
+    ]);
+    expect(hashSnapshot(alwaysRead)).not.toBe(hashSnapshot(withKnowledge));
+  });
+
   it("treats a null system prompt like an empty one, as the runtime does", () => {
     const empty = baseConfig();
     empty.agent.systemPrompt = "";

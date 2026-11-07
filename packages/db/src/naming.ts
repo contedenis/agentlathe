@@ -26,6 +26,7 @@ export const RESERVED_TOOL_NAMES = [
   "memory_add",
   "memory_update",
   "memory_delete",
+  "search_knowledge",
 ] as const;
 
 export function httpToolName(name: string): string {

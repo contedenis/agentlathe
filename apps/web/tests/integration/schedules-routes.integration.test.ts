@@ -86,7 +86,9 @@ describe("schedule routes (requires Docker)", () => {
     process.env.PROVIDER_BASE_URL = `http://127.0.0.1:${(provider.address() as AddressInfo).port}`;
     process.env.PROVIDER_API_KEY = "test-key";
 
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
 
     dbModule = await import("@agentlathe/db");

@@ -4,7 +4,7 @@ Running agentlathe outside the Docker quickstart, and what to get right before i
 
 ## Running without Docker
 
-You supply the Postgres. **Give agentlathe a database of its own** — it cannot share one. The migrations create 24 tables in `public`, and six of the names are generic enough to collide with something you already have: `agents`, `tools`, `skills`, `settings`, `schedules`, `mcp_servers`. Pointed at a database that already uses one of those, the migration aborts on the first collision and prints the `CREATE TABLE` it could not run, without saying that the name was already taken.
+You supply the Postgres. **Give agentlathe a database of its own** — it cannot share one. The migrations create 29 tables in `public`, and six of the names are generic enough to collide with something you already have: `agents`, `tools`, `skills`, `settings`, `schedules`, `mcp_servers`. Pointed at a database that already uses one of those, the migration aborts on the first collision and prints the `CREATE TABLE` it could not run, without saying that the name was already taken.
 
 Its own schema is not a way around this: a `DATABASE_URL` carrying `?options=-c%20search_path%3D...` does set the search path, but the generated foreign keys are qualified as `"public"."agents"`, so the run dies on the first constraint instead.
 
@@ -13,7 +13,9 @@ Both failures are safe — migrations run in a transaction, so a failed one roll
 Two things to know when that database is a managed one (Neon, Supabase, RDS and friends):
 
 - **TLS**: append `?sslmode=require` to `DATABASE_URL` — the `pg` driver honors it, and nothing else in the app needs configuring. Without it, most managed providers refuse the connection.
-- **Role privileges**: `drizzle-kit migrate` records its journal in a `drizzle` schema that it creates on first run, so the role needs `CREATE` on the *database*, not just on `public`. A role that owns the database is enough; a locked-down role that can only write to `public` fails on the journal, not on your tables. No extensions are required — the schema uses `gen_random_uuid()`, which is core Postgres since 13.
+- **Role privileges**: `drizzle-kit migrate` records its journal in a `drizzle` schema that it creates on first run, so the role needs `CREATE` on the *database*, not just on `public`. A role that owns the database is enough; a locked-down role that can only write to `public` fails on the journal, not on your tables. No extensions are required — the schema uses `gen_random_uuid()`, which is core Postgres since 13. pgvector is optional (see below); most managed providers offer it.
+
+**pgvector, optional.** [Knowledge](USAGE.md#knowledge) search works on plain Postgres and returns the same passages with or without the `vector` extension; with it, it is much faster (about 40 ms against 1 s over 10,000 passages in our measurements). To use it, install the extension on the server before you migrate — the `postgresql-16-pgvector` package on Debian/Ubuntu with the PGDG repository, or your managed provider's switch — and the migration creates it in the database. Without it, or without the privilege to create it, the migration prints a notice and goes on. Installed later, run `CREATE EXTENSION vector;` in the database and restart the app, which checks for it once per process. Once the extension exists, a `pg_dump` of the database fails on `CREATE EXTENSION vector` when restored on a server without pgvector.
 
 Migrations are run against `DATABASE_URL` from the shell; the Next.js dev server reads its own env from `apps/web/.env.local`. The commands below assume bash/zsh (inline env vars, a `cat <<'EOF'` heredoc) — on Windows, run them from Git Bash or WSL, or create `apps/web/.env.local` by hand with the same contents.
 
@@ -55,19 +57,21 @@ The [`Dockerfile`](../Dockerfile) is a multi-stage build with two consumable tar
 
 [`docker-compose.yml`](../docker-compose.yml) is a working reference for that wiring — health check on postgres, `service_completed_successfully` on the migrator, `restart: unless-stopped` on the long-lived services. Adapt it rather than starting from scratch.
 
+**The compose Postgres is `pgvector/pgvector:0.8.6-pg16-trixie`**: Postgres 16 with the `vector` extension, on Debian trixie like the current `postgres:16` image, so a `postgres_data` volume created by `postgres:16` is reused as is. A volume first created by a `postgres:16` image from before mid-2025, which was based on Debian bookworm, logs a collation version mismatch on start, because the C library changed underneath it; fix it once with `docker compose exec postgres psql -U postgres -d agentplatform -c 'REINDEX DATABASE agentplatform'` followed by `ALTER DATABASE agentplatform REFRESH COLLATION VERSION` the same way, then that `ALTER DATABASE` for `postgres` and `template1`, which log the mismatch too. The tag is pinned, so Postgres minor releases arrive when agentlathe updates it rather than on `docker compose pull`. The stack builds no vector index; should you add an HNSW one, building it needs more shared memory than Docker's default 64 MB `/dev/shm` — raise `shm_size` on the `postgres` service.
+
 **Health endpoint.** `GET /api/health` does a `select 1` against the database and returns `200 {"status":"ok"}` or `503 {"status":"error"}`. Use it as your orchestrator's liveness/readiness probe and as the upstream check in your proxy; the compose stack already uses it as the app container's health check.
 
 **Put a reverse proxy with authentication in front of it. This is not optional.** agentlathe has no auth of its own. Anyone who reaches the dashboard can read every transcript you recorded, edit every agent, and call every tool those agents can reach. Terminate TLS and authenticate at the proxy (nginx/Caddy with OAuth2 or basic auth, an authenticating load balancer, a VPN), and keep the app itself bound to loopback or a private network.
 
 **If the proxy authenticates the callers of `/v1` or MCP, let it name the subject.** agentlathe takes `x-subject-id` as sent, and a run's subject picks which memory it reads and writes. Have the proxy set `x-subject-id` from the identity it checked, overwriting any value the client sent, so one caller cannot act as another; the header is agentlathe's own name, not one auth proxies set for you (such as `x-user` or `x-forwarded-user`). See [SECURITY.md](../SECURITY.md#memory-trusts-the-callers-labels-and-keeps-what-it-is-told).
 
-**Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, transcripts and agent memory **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
+**Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, transcripts, agent memory and knowledge documents (the original files and their text) **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
 
-**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, run evaluations that finish in the background after the response has gone out, and the [scheduler](#the-scheduler). A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
+**This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, run evaluations and knowledge documents that are processed in the background after the response has gone out, and the [scheduler](#the-scheduler). A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
 
 ## The scheduler
 
-Every app process runs a scheduler loop alongside the server: every 30 seconds it starts the [schedules](USAGE.md#schedules) that are due, and every ten minutes or so it sweeps expired runs and transcripts. There is no separate worker to deploy.
+Every app process runs a scheduler loop alongside the server: every 30 seconds it starts the [schedules](USAGE.md#schedules) that are due and picks up [knowledge documents](#knowledge-processing) waiting to be processed, and every ten minutes or so it sweeps expired runs and transcripts. There is no separate worker to deploy.
 
 - **It needs a long-lived process.** Schedules only fire while an app process is up. A schedule that came due while none was running is skipped, not caught up.
 - **Several replicas are fine.** Due schedules are claimed in Postgres, so two processes never start the same occurrence. To keep the scheduler out of some replicas — a web-only replica, a staging copy pointed at production data — set `SCHEDULER_ENABLED=false` on them. The Schedules page warns when no process has ticked in the last 90 seconds.
@@ -75,6 +79,16 @@ Every app process runs a scheduler loop alongside the server: every 30 seconds i
 - **Without Docker,** run `next start` or the standalone `server.js` with `NEXT_MANUAL_SIG_HANDLE=true` in the environment (not in a `.env` file, which is read too late) to get the same drain. Without it, Next.js exits at once and runs in progress end up marked interrupted three minutes later.
 
 In development `pnpm dev` runs the scheduler too, against whatever database `apps/web/.env.local` points at; set `SCHEDULER_ENABLED=false` there to keep it quiet. Editing the scheduler's code needs a restart of the dev server: hot reload does not restart the loop. The browser E2E suite starts its server with the scheduler off.
+
+## Knowledge processing
+
+Uploaded documents are indexed by the app itself: extracted, split and embedded in the background, two at a time per process, with no separate worker.
+
+- **The provider must serve embeddings.** Documents and search queries are embedded with `EMBEDDING_MODEL` (default `openai/text-embedding-3-small`) through `PROVIDER_BASE_URL` and `PROVIDER_API_KEY`, on its OpenAI-compatible `/embeddings` endpoint. OpenRouter serves it; for another provider, set `EMBEDDING_MODEL` to a model it serves. Compose forwards it from `.env`.
+- **Every replica must use the same `EMBEDDING_MODEL`.** Each process re-embeds any document indexed with a model other than its own, so two values keep re-embedding each other's documents. Changing it on purpose re-embeds every document once, reusing the stored text; until a document is done, search does not find it.
+- **Several replicas are fine.** Documents are claimed in Postgres like schedules, so two processes never index the same one.
+- **Processing outside the upload needs the scheduler.** A document is processed right after its upload. Retries (up to three attempts, two minutes apart), documents interrupted by a restart and the re-embedding after a model change are picked up by the scheduler tick, or by the next upload or retry, which processes whatever is due; with `SCHEDULER_ENABLED=false` on every process, they wait for one of those. On `SIGTERM` with the scheduler on and `NEXT_MANUAL_SIG_HANDLE` set (the image sets it), the process gives back the documents it was indexing without spending an attempt; otherwise another process takes them over after 10 minutes.
+- **Uploads are up to 20 MiB.** A proxy in front of the app must accept request bodies a little larger than that, for the multipart overhead: `client_max_body_size 25m` in nginx, whose default is 1 MB.
 
 ## Binding and CSRF
 

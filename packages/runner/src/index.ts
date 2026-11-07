@@ -21,8 +21,14 @@ export {
   generateWithApprovals,
   type PendingApproval,
 } from "./generate-with-approvals";
-export { buildAuth, getContextLimit, PROVIDER_BASE_URL } from "./helpers";
+export {
+  buildAuth,
+  embeddingModelId,
+  getContextLimit,
+  PROVIDER_BASE_URL,
+} from "./helpers";
 export { compileInputSchema } from "./input-schema";
+export { embedTexts } from "./knowledge";
 export { type AgentRow, loadActiveAgent } from "./loaders";
 export {
   type MemoryPartitionRef,

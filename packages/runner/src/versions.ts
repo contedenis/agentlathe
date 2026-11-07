@@ -4,7 +4,9 @@ import { and, eq } from "drizzle-orm";
 import { MAX_DEPTH } from "./context";
 import {
   type AgentRow,
+  type KnowledgeCollectionRow,
   loadAgentConfig,
+  loadKnowledgeCollections,
   loadMcpServers,
   loadMemoryStores,
   loadSkills,
@@ -23,6 +25,7 @@ export type AgentConfig = {
   mcpServers: McpServerGroup[];
   subAgents: SubAgentRow[];
   memoryStores?: MemoryStoreRow[];
+  knowledge?: KnowledgeCollectionRow[];
 };
 
 export type AgentConfigSnapshot = ReturnType<typeof agentConfigSnapshot>;
@@ -126,6 +129,17 @@ export function agentConfigSnapshot(config: AgentConfig) {
           ),
         }
       : {}),
+    ...(config.knowledge?.length
+      ? {
+          knowledge: sortCanonical(
+            config.knowledge.map((collection) => ({
+              name: collection.name,
+              description: collection.description,
+              mode: collection.mode,
+            })),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -174,16 +188,32 @@ export async function computeAgentVersion(
 }
 
 async function loadConfig(agentId: string): Promise<AgentConfig> {
-  const [agent, skills, httpTools, mcpServers, subAgents, memoryStores] =
-    await Promise.all([
-      loadAgentConfig(agentId),
-      loadSkills(agentId),
-      loadHttpToolRows(agentId),
-      loadMcpServers(agentId),
-      loadSubAgents(agentId),
-      loadMemoryStores(agentId),
-    ]);
-  return { agent, skills, httpTools, mcpServers, subAgents, memoryStores };
+  const [
+    agent,
+    skills,
+    httpTools,
+    mcpServers,
+    subAgents,
+    memoryStores,
+    knowledge,
+  ] = await Promise.all([
+    loadAgentConfig(agentId),
+    loadSkills(agentId),
+    loadHttpToolRows(agentId),
+    loadMcpServers(agentId),
+    loadSubAgents(agentId),
+    loadMemoryStores(agentId),
+    loadKnowledgeCollections(agentId),
+  ]);
+  return {
+    agent,
+    skills,
+    httpTools,
+    mcpServers,
+    subAgents,
+    memoryStores,
+    knowledge,
+  };
 }
 
 export async function resolveAgentVersion(agentId: string): Promise<string> {

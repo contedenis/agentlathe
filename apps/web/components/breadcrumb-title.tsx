@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-type Entry = { path: string; name: string } | null;
+type Entry = { path: string; names: string[] } | null;
 
 const BreadcrumbTitleContext = createContext<{
   entry: Entry;
@@ -26,20 +26,26 @@ export function BreadcrumbTitleProvider({ children }: { children: ReactNode }) {
 }
 
 // Tied to the path that published it, or a stale name labels the next route for a frame.
-export function useBreadcrumbTitle(): string | undefined {
+export function useBreadcrumbTitle(): string[] | undefined {
   const pathname = usePathname();
   const { entry } = useContext(BreadcrumbTitleContext);
-  return entry?.path === pathname ? entry.name : undefined;
+  return entry?.path === pathname ? entry.names : undefined;
 }
 
-export function BreadcrumbTitle({ name }: { name: string }) {
+export function BreadcrumbTitle({
+  name,
+  parent,
+}: {
+  name: string;
+  parent?: string;
+}) {
   const pathname = usePathname();
   const { setEntry } = useContext(BreadcrumbTitleContext);
 
   useEffect(() => {
-    setEntry({ path: pathname, name });
+    setEntry({ path: pathname, names: parent ? [parent, name] : [name] });
     return () => setEntry(null);
-  }, [pathname, name, setEntry]);
+  }, [pathname, name, parent, setEntry]);
 
   return null;
 }

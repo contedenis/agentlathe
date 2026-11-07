@@ -32,6 +32,7 @@ const base: VersionSnapshot = {
   ],
   subAgents: [{ slug: "writer", description: "Writes replies" }],
   memoryStores: [],
+  knowledge: [],
   descendants: [{ slug: "writer", hash: "h1" }],
 };
 
@@ -312,6 +313,36 @@ describe("diffVersions — what changed between two agent versions", () => {
   });
 });
 
+describe("diffVersions — knowledge", () => {
+  it("reports a collection attached or switched to always read, and reads versions saved before knowledge existed", () => {
+    const collection = {
+      name: "Policies",
+      description: "Company policies.",
+      mode: "search" as const,
+    };
+    const { knowledge: _, ...older } = base;
+
+    expect(
+      diffVersions(older, { ...base, knowledge: [collection] }).summary,
+    ).toBe("+1 collection");
+    expect(
+      diffVersions(
+        { ...base, knowledge: [collection] },
+        { ...base, knowledge: [{ ...collection, mode: "always" }] },
+      ).entities,
+    ).toEqual([
+      {
+        kind: "knowledge",
+        name: "Policies",
+        status: "changed",
+        fields: [
+          { label: "Mode", kind: "value", from: "Search", to: "Always read" },
+        ],
+      },
+    ]);
+  });
+});
+
 describe("readSnapshot — tolerating snapshots of another shape", () => {
   it("fills what is missing with empty values", () => {
     expect(readSnapshot({ model: "m", mcpServers: [{ name: "x" }] })).toEqual({
@@ -323,6 +354,7 @@ describe("readSnapshot — tolerating snapshots of another shape", () => {
       mcpServers: [{ name: "x", toolNames: [], approvalToolNames: [] }],
       subAgents: [],
       memoryStores: [],
+      knowledge: [],
       descendants: [],
     });
   });

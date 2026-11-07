@@ -3,6 +3,7 @@ import { structuredPatch } from "diff";
 
 export type VersionSnapshot = AgentVersionSnapshot & {
   memoryStores: NonNullable<AgentVersionSnapshot["memoryStores"]>;
+  knowledge: NonNullable<AgentVersionSnapshot["knowledge"]>;
 };
 
 type Skill = VersionSnapshot["skills"][number];
@@ -10,6 +11,7 @@ type HttpTool = VersionSnapshot["httpTools"][number];
 type McpServer = VersionSnapshot["mcpServers"][number];
 type SubAgent = VersionSnapshot["subAgents"][number];
 type MemoryStore = VersionSnapshot["memoryStores"][number];
+type KnowledgeCollection = VersionSnapshot["knowledge"][number];
 
 export type DiffLine = {
   kind: "context" | "added" | "removed";
@@ -21,7 +23,13 @@ export type FieldChange =
   | { label: string; kind: "text"; hunks: DiffLine[][] }
   | { label: string; kind: "note"; text: string };
 
-export type EntityKind = "skill" | "tool" | "mcp" | "sub_agent" | "memory";
+export type EntityKind =
+  | "skill"
+  | "tool"
+  | "mcp"
+  | "sub_agent"
+  | "memory"
+  | "knowledge";
 
 export type EntityChange = {
   kind: EntityKind;
@@ -57,6 +65,7 @@ export function readSnapshot(raw: unknown): VersionSnapshot {
     })),
     subAgents: asArray<SubAgent>(value.subAgents),
     memoryStores: asArray<MemoryStore>(value.memoryStores),
+    knowledge: asArray<KnowledgeCollection>(value.knowledge),
     descendants: asArray<{ slug: string; hash: string }>(value.descendants),
   };
 }
@@ -191,6 +200,15 @@ const MEMORY_FIELDS: FieldSpec<MemoryStore>[] = [
   { label: "x-memory-key", kind: "value", read: (s) => asString(s.memoryKey) },
 ];
 
+const KNOWLEDGE_FIELDS: FieldSpec<KnowledgeCollection>[] = [
+  { label: "Description", kind: "text", read: (c) => asString(c.description) },
+  {
+    label: "Mode",
+    kind: "value",
+    read: (c) => (c.mode === "always" ? "Always read" : "Search"),
+  },
+];
+
 function descendantChanges(
   from: VersionSnapshot,
   to: VersionSnapshot,
@@ -230,6 +248,7 @@ const KIND_NOUN: Record<EntityKind, [string, string]> = {
   mcp: ["MCP server", "MCP servers"],
   sub_agent: ["sub-agent", "sub-agents"],
   memory: ["memory", "memories"],
+  knowledge: ["collection", "collections"],
 };
 
 function summarize(agent: FieldChange[], entities: EntityChange[]): string {
@@ -307,6 +326,13 @@ export function diffVersions(fromRaw: unknown, toRaw: unknown): VersionChanges {
       to.memoryStores,
       (s) => s.name,
       MEMORY_FIELDS,
+    ),
+    ...diffEntities(
+      "knowledge",
+      from.knowledge,
+      to.knowledge,
+      (c) => c.name,
+      KNOWLEDGE_FIELDS,
     ),
   ];
   const subAgents = diffEntities(

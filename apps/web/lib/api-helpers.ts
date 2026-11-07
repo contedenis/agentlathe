@@ -53,6 +53,8 @@ export function mcpConnectionErrorResponse(
 const UNIQUE_VIOLATION_MESSAGES: Record<string, string> = {
   agents_name_unique: "An agent with this name already exists.",
   agents_slug_unique: "An agent with this slug already exists.",
+  knowledge_collections_name_unique:
+    "A collection with this name already exists.",
 };
 
 const SELF_REFERENCE_CHECK_CONSTRAINT = "agent_sub_agents_parent_child_check";

@@ -3,6 +3,7 @@
 import { isToolUIPart, type UIMessage } from "@agentlathe/runner/chat-ui";
 import { useState } from "react";
 import {
+  deepParseJsonStrings,
   Tool,
   ToolContent,
   ToolHeader,
@@ -27,6 +28,65 @@ function needsAttention(part: MessagePart): boolean {
   );
 }
 
+type Passage = {
+  collection: string;
+  document: string;
+  page: number | null;
+  text: string;
+};
+
+function KnowledgeSearchOutput({
+  input,
+  output,
+}: {
+  input: unknown;
+  output: unknown;
+}) {
+  const query = (deepParseJsonStrings(input) as { query?: unknown } | null)
+    ?.query;
+  const passages = (
+    deepParseJsonStrings(output) as { passages?: Passage[] } | null
+  )?.passages;
+  if (
+    typeof query !== "string" ||
+    !Array.isArray(passages) ||
+    passages.some((passage) => typeof passage?.text !== "string")
+  )
+    return <ToolOutput output={output} errorText={undefined} />;
+  const numbered = passages.map((passage, index) => ({
+    ...passage,
+    number: index + 1,
+  }));
+  return (
+    <div className="flex flex-col gap-3 p-4 text-sm">
+      <p>
+        <span className="text-muted-foreground">Searched for </span>
+        {query}
+      </p>
+      {numbered.length === 0 ? (
+        <p className="text-muted-foreground">
+          Nothing in the collections matched.
+        </p>
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {numbered.map((passage) => (
+            <li
+              key={passage.number}
+              className="flex flex-col gap-1 rounded-md border p-2"
+            >
+              <span className="font-mono text-xs text-muted-foreground">
+                {passage.number}. {passage.collection} · {passage.document}
+                {passage.page !== null && ` · page ${passage.page}`}
+              </span>
+              <span className="whitespace-pre-wrap">{passage.text}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export function ToolCallDisplay({ part }: { part: MessagePart }) {
   // Frozen at mount: the Collapsible is uncontrolled, and Base UI warns if its
   // default changes when the part transitions (approval-requested → responded).
@@ -47,9 +107,12 @@ export function ToolCallDisplay({ part }: { part: MessagePart }) {
           part.state === "approval-requested") && (
           <ToolInput input={part.input} />
         )}
-        {part.state === "output-available" && (
-          <ToolOutput output={part.output} errorText={undefined} />
-        )}
+        {part.state === "output-available" &&
+          (toolNameOf(part) === "search_knowledge" ? (
+            <KnowledgeSearchOutput input={part.input} output={part.output} />
+          ) : (
+            <ToolOutput output={part.output} errorText={undefined} />
+          ))}
         {part.state === "output-error" && (
           <ToolOutput output={undefined} errorText={part.errorText} />
         )}

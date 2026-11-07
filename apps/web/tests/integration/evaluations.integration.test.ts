@@ -255,7 +255,9 @@ describe("evaluators: criteria, the judge client and manual evaluation (requires
     process.env.PROVIDER_BASE_URL = `${judgeOrigin}/api/v1`;
     process.env.PROVIDER_API_KEY = "test-key";
 
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
 
     dbModule = await import("@agentlathe/db");

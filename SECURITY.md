@@ -73,6 +73,18 @@ Memory has **no TTL and no redaction**. Entries and every past version stay unti
 
 **Revisit before** giving memory to an agent that serves people you do not control: have your proxy set `x-subject-id` from the identity it authenticated, overwriting whatever the client sent (see [DEPLOYMENT.md](docs/DEPLOYMENT.md#production-deployment)), and turn on **Require approval** on that memory so nothing reaches later runs before a person reads it.
 
+## Knowledge is sent out to be indexed, and read as data
+
+Documents uploaded to a [knowledge collection](docs/USAGE.md#knowledge) leave the instance twice. **Their whole text goes to the embedding provider** when they are indexed — `PROVIDER_BASE_URL`, OpenRouter by default, with `PROVIDER_API_KEY` — and again every time `EMBEDDING_MODEL` changes. **Every search query goes there too**, and the model writes it from the conversation. **Parts of it then go to the agent's model**: the passages a search returns, or every document of a collection the agent reads whole, as part of each run, and from there into the run's transcript when it is recorded.
+
+Inside the instance, the original file, its extracted text and its passages are stored in Postgres with **no TTL and no redaction**, until someone deletes the document or its collection. There are no permissions per collection: anyone who reaches the dashboard can read the text of every document and download the original, and any agent can be given any collection.
+
+**A document is a prompt-injection channel.** Text in a document can be written to steer whoever reads it. Documents read whole are placed at the end of the instructions, framed as reference material — data, not instructions, never overriding the rules above them — and search results reach the model as the output of a tool, not as instructions. A model can still follow what it reads: the framing lowers the risk, it does not remove it.
+
+**Is that acceptable?** For documents you chose and trust, yes: the instance is single-tenant, and the operator decides what each agent may read.
+
+**Revisit before** uploading documents you did not write or check, attaching a collection to an agent that serves other people, or uploading anything your provider's data terms do not cover.
+
 ## Approval gate covers HTTP and MCP tools; sub-agents bypass it
 
 The `needsApproval` flag exists for HTTP tools and, per agent, for each selected MCP server tool: when set, the runner prompts for approval before executing the tool call (Playground banner, MCP elicitation) or denies it on the headless surfaces (`/v1`, sub-agents, scheduled runs). Sub-agent invocations themselves have no gate — delegation to a sub-agent always proceeds, and everything a sub-agent runs is headless, so its own gated tools are denied rather than executed.
@@ -83,7 +95,7 @@ The `needsApproval` flag exists for HTTP tools and, per agent, for each selected
 
 ## Retention sweep is lazy, and needs a page load or a scheduler
 
-Run and transcript retention is enforced by a lazy sweep that queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). It runs when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, and about every ten minutes while the app's scheduler runs, which it does by default. Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions.
+Run and transcript retention is enforced by a lazy sweep that queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). It runs when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, and about every ten minutes while the app's scheduler runs, which it does by default. Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions. Knowledge documents are not swept either: they stay until someone deletes them or their collection.
 
 **Is that acceptable?** Yes. A headless instance — one that only receives `/v1` or `/mcp` traffic and never loads the dashboard — is swept by its scheduler.
 

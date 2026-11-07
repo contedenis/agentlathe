@@ -35,7 +35,7 @@ export function toolPreview(part: {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-function deepParseJsonStrings(value: unknown): unknown {
+export function deepParseJsonStrings(value: unknown): unknown {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {

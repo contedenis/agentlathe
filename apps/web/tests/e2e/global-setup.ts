@@ -64,7 +64,9 @@ export default async function globalSetup() {
 
   const apiKey = requireOpenRouterKey();
 
-  const container = await new PostgreSqlContainer("postgres:17-alpine").start();
+  const container = await new PostgreSqlContainer(
+    "pgvector/pgvector:0.8.6-pg16-trixie",
+  ).start();
   const databaseUrl = container.getConnectionUri();
 
   const pool = new Pool({ connectionString: databaseUrl });

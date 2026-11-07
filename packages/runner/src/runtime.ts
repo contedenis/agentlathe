@@ -24,6 +24,12 @@ import {
   getContextLimit,
 } from "./helpers";
 import {
+  buildSearchKnowledgeTool,
+  type KnowledgeView,
+  loadKnowledge,
+  renderKnowledgeSection,
+} from "./knowledge";
+import {
   type AgentRow,
   loadAgentConfig,
   loadSkills,
@@ -40,12 +46,21 @@ import {
   addChildRunStats,
   createRunStatsCollector,
 } from "./recording";
-import { buildTools } from "./tools";
+import { buildTools, type ToolKind } from "./tools";
+
+const BUILTIN_KINDS: Record<(typeof RESERVED_TOOL_NAMES)[number], ToolKind> = {
+  load_skill: "skill",
+  memory_add: "memory",
+  memory_update: "memory",
+  memory_delete: "memory",
+  search_knowledge: "knowledge",
+};
 
 export function buildSystemPrompt(
   agent: AgentRow,
   skills: SkillRow[],
   memory: MemoryStoreView[] = [],
+  knowledge?: KnowledgeView,
 ): string {
   const sections = [agent.systemPrompt ?? ""];
   if (skills.length > 0) {
@@ -57,6 +72,8 @@ export function buildSystemPrompt(
     );
   }
   if (memory.length > 0) sections.push(renderMemorySection(memory));
+  const knowledgeSection = knowledge ? renderKnowledgeSection(knowledge) : "";
+  if (knowledgeSection) sections.push(knowledgeSection);
   return sections.join("\n\n");
 }
 
@@ -76,9 +93,9 @@ export function buildLoadSkillTool(skills: SkillRow[]): Tool {
 export function buildPrepareStep(
   agent: AgentRow,
 ): PrepareStepFunction<ToolSet> {
-  return async ({ messages }) => {
+  return async ({ messages, instructions }) => {
     const limit = await getContextLimit(agent.model);
-    if (estimateTokens(messages) > limit * 0.8) {
+    if (estimateTokens([instructions ?? "", messages]) > limit * 0.8) {
       return {
         messages: pruneMessages({
           messages,
@@ -127,10 +144,13 @@ async function assembleRuntime(
   options?: RuntimeOptions,
 ) {
   const childRunStats: AgentRunStats[] = [];
-  const [skillsOutcome, memoryOutcome, composedOutcome] =
+  const [skillsOutcome, memoryOutcome, knowledgeOutcome, composedOutcome] =
     await Promise.allSettled([
       loadSkills(agent.id),
       loadMemory(agent.id, ctx.run),
+      getContextLimit(agent.model).then((limit) =>
+        loadKnowledge(agent.id, limit),
+      ),
       buildTools(agent.id, ctx, buildSubAgentRuntime, (childStats) =>
         childRunStats.push(childStats),
       ),
@@ -138,7 +158,7 @@ async function assembleRuntime(
   if (composedOutcome.status === "rejected") throw composedOutcome.reason;
   const composed = composedOutcome.value;
   // Once buildTools resolved, every exit path owns live MCP clients to close.
-  for (const outcome of [skillsOutcome, memoryOutcome])
+  for (const outcome of [skillsOutcome, memoryOutcome, knowledgeOutcome])
     if (outcome.status === "rejected") {
       await composed.cleanup();
       throw outcome.reason;
@@ -149,12 +169,17 @@ async function assembleRuntime(
       Awaited<ReturnType<typeof loadMemory>>
     >
   ).value;
+  const knowledge = (knowledgeOutcome as PromiseFulfilledResult<KnowledgeView>)
+    .value;
 
   const builtins: Partial<Record<(typeof RESERVED_TOOL_NAMES)[number], Tool>> =
     {
       load_skill: buildLoadSkillTool(skills),
       ...(memory.stores[0]
         ? buildMemoryTools(memory.stores[0], ctx.memoryDrafts)
+        : {}),
+      ...(knowledge.search.length > 0
+        ? { search_knowledge: buildSearchKnowledgeTool(knowledge.search) }
         : {}),
     };
   const toolset: ToolSet = { ...composed.tools };
@@ -171,7 +196,7 @@ async function assembleRuntime(
       toolKinds.set(finalName, composed.toolKinds.get(name) ?? "tool");
       if (approvalToolNames.delete(name)) approvalToolNames.add(finalName);
     }
-    toolKinds.set(name, name === "load_skill" ? "skill" : "memory");
+    toolKinds.set(name, BUILTIN_KINDS[name]);
   }
 
   const collector = createRunStatsCollector(toolKinds);
@@ -179,7 +204,7 @@ async function assembleRuntime(
   try {
     const runtime = new ToolLoopAgent({
       model: buildProvider(agent.model),
-      instructions: buildSystemPrompt(agent, skills, memory.stores),
+      instructions: buildSystemPrompt(agent, skills, memory.stores, knowledge),
       tools: toolset,
       stopWhen: options?.stopWhen ?? stepCountIs(agent.maxSteps ?? 20),
       toolApproval: options?.buildApproval?.(approvalToolNames),
@@ -200,7 +225,11 @@ async function assembleRuntime(
           ...composed.mcpFailures,
           ...snapshot.mcpFailures,
         ];
-        snapshot.warnings = [...memory.warnings, ...snapshot.warnings];
+        snapshot.warnings = [
+          ...memory.warnings,
+          ...knowledge.warnings,
+          ...snapshot.warnings,
+        ];
         snapshot.memorySeen = [...memory.seen, ...snapshot.memorySeen];
         for (const child of childRunStats) addChildRunStats(snapshot, child);
         snapshot.memoryWrites = [...ctx.memoryDrafts.values()].filter(

@@ -32,6 +32,7 @@ vi.mock("./loaders", () => ({
     systemPrompt: "",
     maxSteps: 5,
   })),
+  loadKnowledgeCollections: vi.fn(async () => []),
   loadSkills: vi.fn(async () => []),
 }));
 vi.mock("./tools", () => ({ buildTools: vi.fn() }));
@@ -105,6 +106,22 @@ describe("buildPrepareStep — compaction", () => {
       toolCalls: "before-last-3-messages",
     });
     expect(result).toEqual({ messages: pruned });
+  });
+
+  it("counts the instructions too, where always-read documents live", async () => {
+    vi.mocked(getContextLimit).mockResolvedValue(1000);
+    vi.mocked(estimateTokens).mockReturnValue(10);
+
+    const messages = [{ role: "user", content: "x" }];
+    await buildPrepareStep(agent)({
+      ...stepOptions(messages),
+      instructions: "long reference documents",
+    });
+
+    expect(estimateTokens).toHaveBeenCalledWith([
+      "long reference documents",
+      messages,
+    ]);
   });
 
   it("below the threshold, returns {} and does NOT prune", async () => {

@@ -10,6 +10,10 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
+import {
+  type KnowledgeCatalogItem,
+  KnowledgePicker,
+} from "@/components/forms/knowledge-picker";
 import { MemoryConfig } from "@/components/forms/memory-config";
 import { ModelCombobox } from "@/components/forms/model-combobox";
 import {
@@ -25,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
+import type { KnowledgeLink } from "@/lib/knowledge-modes";
 import {
   type AgentMemoryConfig,
   EMPTY_MEMORY_CONFIG,
@@ -65,14 +70,17 @@ type AgentFormValues = {
   subAgentIds: string[];
   mcpTools: McpToolSelection[];
   memory: AgentMemoryConfig;
+  knowledge: KnowledgeLink[];
 };
 
 export function AgentForm({
   catalogs,
+  collections,
   models,
   initial,
 }: {
   catalogs: ToolPickerCatalogs;
+  collections: KnowledgeCatalogItem[];
   models: ModelOption[];
   initial?: AgentFormValues;
 }) {
@@ -103,6 +111,11 @@ export function AgentForm({
   const [memory, setMemory] = useState<AgentMemoryConfig>(
     initial?.memory ?? EMPTY_MEMORY_CONFIG,
   );
+  const [knowledge, setKnowledge] = useState<KnowledgeLink[]>(
+    initial?.knowledge ?? [],
+  );
+  const contextLength =
+    models.find((option) => option.id === model)?.contextLength ?? null;
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasMounted, setCanvasMounted] = useState(false);
   const [pending, setPending] = useState(false);
@@ -157,6 +170,7 @@ export function AgentForm({
       subAgentIds,
       mcpTools,
       memory: memoryConfigBody(memory),
+      knowledge,
     };
     try {
       if (mode === "create") {
@@ -321,6 +335,20 @@ export function AgentForm({
         </CardHeader>
         <CardContent>
           <MemoryConfig value={memory} onChange={setMemory} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Knowledge</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <KnowledgePicker
+            collections={collections}
+            value={knowledge}
+            onChange={setKnowledge}
+            contextLength={contextLength}
+          />
         </CardContent>
       </Card>
 

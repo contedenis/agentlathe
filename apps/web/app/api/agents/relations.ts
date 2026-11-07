@@ -1,4 +1,5 @@
 import {
+  agentKnowledge,
   agentMcpTools,
   agentSkills,
   agentSubAgents,
@@ -14,7 +15,7 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type RelationsInput = Pick<
   Partial<AgentInput>,
-  "skillIds" | "toolIds" | "subAgentIds" | "mcpTools" | "memory"
+  "skillIds" | "toolIds" | "subAgentIds" | "mcpTools" | "memory" | "knowledge"
 >;
 
 type MemoryInput = NonNullable<AgentInput["memory"]>;
@@ -93,6 +94,15 @@ export async function replaceAgentRelations(
   }
 
   if (input.memory) await saveMemory(tx, agentId, input.memory);
+
+  if (input.knowledge !== undefined) {
+    await tx.delete(agentKnowledge).where(eq(agentKnowledge.agentId, agentId));
+    if (input.knowledge.length > 0) {
+      await tx
+        .insert(agentKnowledge)
+        .values(input.knowledge.map((link) => ({ agentId, ...link })));
+    }
+  }
 
   if (input.mcpTools !== undefined) {
     await tx.delete(agentMcpTools).where(eq(agentMcpTools.agentId, agentId));

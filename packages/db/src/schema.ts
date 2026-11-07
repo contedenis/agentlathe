@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  customType,
   date,
   foreignKey,
   index,
@@ -30,6 +31,9 @@ import {
   DEFAULT_TRANSCRIPT_TTL_DAYS,
   FIX_DRAFT_CATEGORIES,
   FIX_DRAFT_STATUSES,
+  KNOWLEDGE_DOCUMENT_STATUSES,
+  KNOWLEDGE_MEDIA_TYPES,
+  KNOWLEDGE_MODES,
   MAX_MEMORY_CHAR_LIMIT,
   MEMORY_AUTHORS,
   MEMORY_COMPACTION_STATUSES,
@@ -735,6 +739,113 @@ export const memoryCompactions = pgTable(
   ],
 );
 
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => "bytea",
+});
+
+export const knowledgeCollections = pgTable("knowledge_collections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const knowledgeDocuments = pgTable(
+  "knowledge_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => knowledgeCollections.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    mediaType: text("media_type").notNull(),
+    size: integer("size").notNull(),
+    text: text("text"),
+    pages: integer("pages"),
+    chars: integer("chars"),
+    status: text("status").notNull().default("pending"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimId: uuid("claim_id"),
+    embeddingModel: text("embedding_model"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("knowledge_documents_collection_id_idx").on(table.collectionId),
+    index("knowledge_documents_waiting_idx")
+      .on(table.createdAt)
+      .where(sql`${table.status} in ('pending','processing')`),
+    check(
+      "knowledge_documents_media_type_check",
+      sql`${table.mediaType} in (${sqlInList(KNOWLEDGE_MEDIA_TYPES)})`,
+    ),
+    check(
+      "knowledge_documents_status_check",
+      sql`${table.status} in (${sqlInList(KNOWLEDGE_DOCUMENT_STATUSES)})`,
+    ),
+  ],
+);
+
+export const knowledgeFiles = pgTable("knowledge_files", {
+  documentId: uuid("document_id")
+    .primaryKey()
+    .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+  bytes: bytea("bytes").notNull(),
+});
+
+export const knowledgeChunks = pgTable(
+  "knowledge_chunks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    page: integer("page"),
+    content: text("content").notNull(),
+    embedding: real("embedding").array().notNull(),
+    embeddingModel: text("embedding_model").notNull(),
+  },
+  (table) => [
+    unique("knowledge_chunks_document_id_position_unique").on(
+      table.documentId,
+      table.position,
+    ),
+  ],
+);
+
+export const agentKnowledge = pgTable(
+  "agent_knowledge",
+  {
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => knowledgeCollections.id, { onDelete: "cascade" }),
+    mode: text("mode").notNull().default("search"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.collectionId] }),
+    index("agent_knowledge_collection_id_idx").on(table.collectionId),
+    check(
+      "agent_knowledge_mode_check",
+      sql`${table.mode} in (${sqlInList(KNOWLEDGE_MODES)})`,
+    ),
+  ],
+);
+
 export const agentsRelations = relations(agents, ({ many }) => ({
   agentSkills: many(agentSkills),
   agentTools: many(agentTools),
@@ -746,6 +857,7 @@ export const agentsRelations = relations(agents, ({ many }) => ({
   criteria: many(agentCriteria),
   schedules: many(schedules),
   memoryStores: many(memoryStores),
+  knowledge: many(agentKnowledge),
 }));
 
 export const agentVersionsRelations = relations(
@@ -902,5 +1014,53 @@ export const memoryStoresRelations = relations(memoryStores, ({ one }) => ({
   owner: one(agents, {
     fields: [memoryStores.ownerAgentId],
     references: [agents.id],
+  }),
+}));
+
+export const knowledgeCollectionsRelations = relations(
+  knowledgeCollections,
+  ({ many }) => ({
+    documents: many(knowledgeDocuments),
+    agents: many(agentKnowledge),
+  }),
+);
+
+export const knowledgeDocumentsRelations = relations(
+  knowledgeDocuments,
+  ({ one, many }) => ({
+    collection: one(knowledgeCollections, {
+      fields: [knowledgeDocuments.collectionId],
+      references: [knowledgeCollections.id],
+    }),
+    file: one(knowledgeFiles),
+    chunks: many(knowledgeChunks),
+  }),
+);
+
+export const knowledgeChunksRelations = relations(
+  knowledgeChunks,
+  ({ one }) => ({
+    document: one(knowledgeDocuments, {
+      fields: [knowledgeChunks.documentId],
+      references: [knowledgeDocuments.id],
+    }),
+  }),
+);
+
+export const agentKnowledgeRelations = relations(agentKnowledge, ({ one }) => ({
+  agent: one(agents, {
+    fields: [agentKnowledge.agentId],
+    references: [agents.id],
+  }),
+  collection: one(knowledgeCollections, {
+    fields: [agentKnowledge.collectionId],
+    references: [knowledgeCollections.id],
+  }),
+}));
+
+export const knowledgeFilesRelations = relations(knowledgeFiles, ({ one }) => ({
+  document: one(knowledgeDocuments, {
+    fields: [knowledgeFiles.documentId],
+    references: [knowledgeDocuments.id],
   }),
 }));

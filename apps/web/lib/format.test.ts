@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { compact, fmt, formatCost, formatDay, formatDuration } from "./format";
+import {
+  compact,
+  fmt,
+  formatBytes,
+  formatCost,
+  formatDay,
+  formatDuration,
+} from "./format";
 
 describe("formatDuration — the second is the unit boundary", () => {
   it("stays in milliseconds below one second", () => {
@@ -61,5 +68,13 @@ describe("fmt", () => {
     expect(fmt(1000)).toBe("1,000");
     expect(fmt(1_234_567)).toBe("1,234,567");
     expect(fmt(0)).toBe("0");
+  });
+});
+
+describe("formatBytes", () => {
+  it("uses bytes, whole kilobytes and megabytes with a decimal", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("2 KB");
+    expect(formatBytes(20 * 1024 * 1024)).toBe("20.0 MB");
   });
 });

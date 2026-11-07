@@ -45,7 +45,9 @@ let runner: typeof import("@agentlathe/runner");
 beforeAll(async () => {
   requireOpenRouterKey();
 
-  container = await new PostgreSqlContainer("postgres:17-alpine").start();
+  container = await new PostgreSqlContainer(
+    "pgvector/pgvector:0.8.6-pg16-trixie",
+  ).start();
   process.env.DATABASE_URL = container.getConnectionUri();
   const pool = new Pool({ connectionString: container.getConnectionUri() });
   await migrate(drizzle(pool), { migrationsFolder });

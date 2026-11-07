@@ -12,6 +12,7 @@ const SECTION_LABELS: Record<string, string> = {
   skills: "Skills",
   "mcp-servers": "MCP Servers",
   memory: "Memory",
+  knowledge: "Knowledge",
   schedules: "Schedules",
   metrics: "Metrics",
   runs: "Runs",
@@ -26,7 +27,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i;
 
 type Crumb = { label: string; href?: string };
 
-function buildCrumbs(pathname: string, entityName?: string): Crumb[] {
+function buildCrumbs(pathname: string, entityNames?: string[]): Crumb[] {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return [{ label: "Home" }];
 
@@ -36,10 +37,11 @@ function buildCrumbs(pathname: string, entityName?: string): Crumb[] {
   ];
 
   let acc = `/${section}`;
+  let entity = 0;
   for (const seg of rest) {
     acc += `/${seg}`;
     const label = UUID_RE.test(seg)
-      ? (entityName ?? "Detail")
+      ? (entityNames?.[entity++] ?? "Detail")
       : (LEAF_LABELS[seg] ?? seg);
     crumbs.push({ label, href: acc });
   }
@@ -51,8 +53,8 @@ function buildCrumbs(pathname: string, entityName?: string): Crumb[] {
 
 export function AppBreadcrumbs() {
   const pathname = usePathname();
-  const entityName = useBreadcrumbTitle();
-  const crumbs = buildCrumbs(pathname, entityName);
+  const entityNames = useBreadcrumbTitle();
+  const crumbs = buildCrumbs(pathname, entityNames);
 
   return (
     <nav

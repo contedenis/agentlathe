@@ -1,6 +1,7 @@
 import {
   AGENT_SLUG_MAX_LENGTH,
   AGENT_SLUG_PATTERN,
+  KNOWLEDGE_MODES,
   MAX_MEMORY_CHAR_LIMIT,
   RUN_LABEL_MAX_LENGTH,
 } from "@agentlathe/db";
@@ -53,6 +54,14 @@ const memorySchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+const knowledgeSchema = z
+  .array(z.object({ collectionId: uuidSchema, mode: z.enum(KNOWLEDGE_MODES) }))
+  .refine(
+    (links) =>
+      new Set(links.map((link) => link.collectionId)).size === links.length,
+    { message: "each collection can be attached once" },
+  );
+
 const base = {
   name: z.string().min(1),
   slug: slugSchema.optional(),
@@ -68,6 +77,7 @@ const base = {
   subAgentIds: z.array(uuidSchema).optional(),
   mcpTools: z.array(agentMcpToolSchema).optional(),
   memory: memorySchema.optional(),
+  knowledge: knowledgeSchema.optional(),
 };
 
 export const agentCreateSchema = z.object(base);

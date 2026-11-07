@@ -11,11 +11,15 @@ import { applyMemoryOps } from "./memory";
 import { agentAskToolName, agentSlug } from "./naming";
 import {
   agentCriteria,
+  agentKnowledge,
   agentMcpTools,
   agentSkills,
   agentSubAgents,
   agents,
   agentTools,
+  knowledgeCollections,
+  knowledgeDocuments,
+  knowledgeFiles,
   mcpServers,
   memoryStores,
   schedules,
@@ -443,6 +447,67 @@ async function seedDemoExamples() {
   );
 }
 
+const KNOWLEDGE_COLLECTION = "Support policies";
+const KNOWLEDGE_AGENT = "Support coordinator";
+const KNOWLEDGE_DOCUMENT = `# Support policies
+
+## Refunds
+
+- Refunds up to $500 are approved by the support team on the same day.
+- Refunds over $500 go to the billing team, which answers within two business days.
+- An order can be refunded up to 30 days after delivery. After that, offer store credit.
+
+## Shipping
+
+- Orders placed before 2 p.m. ship the same business day.
+- Express shipping is refunded when the order arrives late.
+
+## Escalation
+
+- A customer who reports the same problem three times gets a ticket with priority high.
+- Never promise a delivery date the carrier has not confirmed.
+`;
+
+async function seedDemoKnowledge() {
+  const [agent] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(eq(agents.name, KNOWLEDGE_AGENT));
+  const [existing] = await db
+    .select({ id: knowledgeCollections.id })
+    .from(knowledgeCollections)
+    .where(eq(knowledgeCollections.name, KNOWLEDGE_COLLECTION));
+  if (!agent || existing) return;
+
+  const bytes = Buffer.from(KNOWLEDGE_DOCUMENT);
+  await db.transaction(async (tx) => {
+    const [collection] = await tx
+      .insert(knowledgeCollections)
+      .values({
+        name: KNOWLEDGE_COLLECTION,
+        description:
+          "How support handles refunds, shipping and escalations: limits, deadlines and who decides.",
+      })
+      .returning({ id: knowledgeCollections.id });
+    const [document] = await tx
+      .insert(knowledgeDocuments)
+      .values({
+        collectionId: collection.id,
+        filename: "support-policies.md",
+        mediaType: "text/markdown",
+        size: bytes.length,
+      })
+      .returning({ id: knowledgeDocuments.id });
+    await tx.insert(knowledgeFiles).values({ documentId: document.id, bytes });
+    await tx
+      .insert(agentKnowledge)
+      .values({ agentId: agent.id, collectionId: collection.id });
+  });
+  console.log(
+    `seed-demo: the "${KNOWLEDGE_COLLECTION}" collection, attached to ${KNOWLEDGE_AGENT}; its document is indexed once the app runs (it calls the embedding model).`,
+  );
+}
+
 export async function seedDemo() {
   const [existing] = await db
     .select({ id: agents.id })
@@ -454,6 +519,7 @@ export async function seedDemo() {
       `seed-demo: "${MARKER}" already exists; adding only what is missing.`,
     );
     await seedDemoExamples();
+    await seedDemoKnowledge();
     return;
   }
 
@@ -570,6 +636,7 @@ export async function seedDemo() {
       );
   });
   await seedDemoExamples();
+  await seedDemoKnowledge();
 }
 
 if (isMain(import.meta.url)) {

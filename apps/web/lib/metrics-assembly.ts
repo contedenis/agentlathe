@@ -203,7 +203,7 @@ export function assembleCapabilities(
     capabilities.push({
       ...stats,
       displayName: stats.name,
-      configured: stats.kind === "memory",
+      configured: stats.kind === "memory" || stats.kind === "knowledge",
     });
   }
   capabilities.sort(

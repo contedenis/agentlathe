@@ -18,12 +18,13 @@ vi.mock("./memory", async (importOriginal) => ({
 }));
 vi.mock("./loaders", () => ({
   loadAgentConfig: vi.fn(),
+  loadKnowledgeCollections: vi.fn(async () => []),
   loadSkills: vi.fn(),
 }));
 vi.mock("./tools", () => ({ buildTools: vi.fn() }));
 vi.mock("./helpers", () => ({
   buildProvider: vi.fn(() => ({ model: "stub" })),
-  getContextLimit: vi.fn(),
+  getContextLimit: vi.fn(async () => 128_000),
   estimateTokens: vi.fn(),
 }));
 

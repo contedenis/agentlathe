@@ -4,6 +4,29 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
+### Added
+
+- **Knowledge.** The new **Knowledge** section holds collections of documents agents can consult: PDF with a text layer, Markdown and plain text, up to 20 MB each. Each document is processed in the background — text extracted, split into passages and embedded with `EMBEDDING_MODEL` — and shows whether it is waiting, processing, ready or failed, and why; one that failed at the provider can be retried. The document page shows the extracted text, which is what agents read (the beginning of it, for a long document), and the original can be downloaded. Attach collections in the agent's new **Knowledge** card: by default the agent gets a `search_knowledge` tool and its instructions list the collections with their descriptions, so describe what each one holds. Each search returns the five closest passages with their collection, document and page. See [USAGE.md](docs/USAGE.md#knowledge).
+- **Always read.** A collection attached as **Always read** goes whole into the agent's instructions, as reference material and not as instructions. The collections read whole share a quarter of the model's context: the agent form shows how much of it they take, and a collection that does not fit is searched instead for that run, which says so on the run and the agent page.
+- The run page shows each knowledge search with its query and the passages it returned. An agent's version now includes the name, description and mode of each attached collection, not its documents: adding a document to a collection does not create a new version.
+
+### Security
+
+- The text of every document you upload is sent to the embedding provider (`PROVIDER_BASE_URL`, OpenRouter by default), and the passages an agent finds, or the documents it reads whole, reach the agent's model as part of its runs. Documents and their text have no TTL and no redaction, and anyone who reaches the dashboard can read and download them.
+- A document can carry text written to steer the agent. Documents read whole are framed as data, not instructions, and search results arrive as tool output, but a model can still follow what it reads. See [SECURITY.md](SECURITY.md#knowledge-is-sent-out-to-be-indexed-and-read-as-data).
+
+### Upgrading
+
+- A migration adds the knowledge tables. The compose `migrator` applies it on `docker compose up --build`; without Docker, run `pnpm --filter @agentlathe/db migrate` before starting the app.
+- The compose stack now runs Postgres from `pgvector/pgvector:0.8.6-pg16-trixie` instead of `postgres:16`: the same Postgres 16 on the same Debian release, so the existing `postgres_data` volume is reused. A volume first created by a `postgres:16` image from before mid-2025 (Debian bookworm) logs a collation version mismatch; run `REINDEX DATABASE agentplatform` and then `ALTER DATABASE agentplatform REFRESH COLLATION VERSION` once, and the same `ALTER DATABASE` for `postgres` and `template1`, which log it too. The image tag is pinned, so Postgres minor updates now arrive with agentlathe updates instead of on every pull.
+- Without Docker, pgvector is optional. With the `vector` extension installed before you migrate (the `postgresql-16-pgvector` package, or your managed provider's switch), the migration creates it and search runs much faster; without it the migration logs a notice and goes on, and search uses plain SQL with the same results. Installing it later takes `CREATE EXTENSION vector` and a restart of the app. Once it exists, a `pg_dump` of the database only restores on a server that has pgvector.
+- Documents are embedded with `EMBEDDING_MODEL` (default `openai/text-embedding-3-small`) through `PROVIDER_BASE_URL` and `PROVIDER_API_KEY`, so the provider must serve an OpenAI-compatible embeddings endpoint; OpenRouter does. Changing the model re-embeds every document, and until a document is re-embedded search does not find it. Every replica must use the same `EMBEDDING_MODEL`, or they keep re-embedding each other's documents.
+- Uploaded documents are processed right after the upload; retries, documents interrupted by a restart and re-embedding after a model change wait for the next scheduler tick, or the next upload or retry. With `SCHEDULER_ENABLED=false` on every process, they wait for an upload or a retry.
+- A reverse proxy in front of the app must accept request bodies of up to 25 MB for document uploads; nginx's `client_max_body_size` defaults to 1 MB, and larger uploads fail with 413.
+- `search_knowledge` is now a tool name of its own. An HTTP or MCP tool of an agent with a searched collection that resolves to it is renamed for the model (`search_knowledge_2`), keeping its approval gate.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added
@@ -81,7 +104,8 @@ What changed in each version of agentlathe, written for the people running an in
 
 First public release: agents defined in Postgres and exposed through an in-app Playground, an OpenAI-compatible `/v1` and one MCP endpoint per agent, with HTTP tools, MCP servers, skills, sub-agents and approval gates. Every call becomes a run you can read and annotate with fix drafts, and `/metrics` covers runs, latency, tokens and cost.
 
-[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/contedenis/agentlathe/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/contedenis/agentlathe/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/contedenis/agentlathe/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/contedenis/agentlathe/compare/v0.1.0...v0.2.0

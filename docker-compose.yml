@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.6-pg16-trixie
     environment:
       POSTGRES_DB: agentplatform
       POSTGRES_USER: postgres

@@ -29,8 +29,15 @@ export async function PATCH(
 
   const parsed = await parseBody(req, agentUpdateSchema);
   if ("error" in parsed) return parsed.error;
-  const { skillIds, toolIds, subAgentIds, mcpTools, memory, ...agentFields } =
-    parsed.data;
+  const {
+    skillIds,
+    toolIds,
+    subAgentIds,
+    mcpTools,
+    memory,
+    knowledge,
+    ...agentFields
+  } = parsed.data;
 
   if (subAgentIds?.includes(id)) {
     return Response.json(
@@ -63,6 +70,7 @@ export async function PATCH(
         subAgentIds,
         mcpTools,
         memory,
+        knowledge,
       });
       return updated;
     });

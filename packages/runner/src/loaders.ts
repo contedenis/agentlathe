@@ -1,16 +1,19 @@
 import {
+  agentKnowledge,
   agentMcpTools,
   agentSkills,
   agentSubAgents,
   agents,
   db,
   isUuid,
+  type KnowledgeMode,
+  knowledgeCollections,
   type MemoryScope,
   mcpServers,
   memoryStores,
   skills,
 } from "@agentlathe/db";
-import { and, eq, or } from "drizzle-orm";
+import { and, asc, eq, or } from "drizzle-orm";
 
 export type AgentRow = typeof agents.$inferSelect;
 
@@ -179,4 +182,31 @@ export async function loadMcpServers(
     if (row.needsApproval) group.approvalToolNames.push(row.toolName);
   }
   return [...byServer.values()];
+}
+
+export type KnowledgeCollectionRow = {
+  id: string;
+  name: string;
+  description: string;
+  mode: KnowledgeMode;
+};
+
+export async function loadKnowledgeCollections(
+  agentId: string,
+): Promise<KnowledgeCollectionRow[]> {
+  const rows = await db
+    .select({
+      id: knowledgeCollections.id,
+      name: knowledgeCollections.name,
+      description: knowledgeCollections.description,
+      mode: agentKnowledge.mode,
+    })
+    .from(agentKnowledge)
+    .innerJoin(
+      knowledgeCollections,
+      eq(knowledgeCollections.id, agentKnowledge.collectionId),
+    )
+    .where(eq(agentKnowledge.agentId, agentId))
+    .orderBy(asc(knowledgeCollections.name));
+  return rows.map((row) => ({ ...row, mode: row.mode as KnowledgeMode }));
 }

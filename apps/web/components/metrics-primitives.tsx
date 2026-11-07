@@ -7,6 +7,7 @@ export const KIND_LABEL: Record<string, string> = {
   sub_agent: "sub-agent",
   skill: "skill",
   memory: "memory",
+  knowledge: "knowledge",
 };
 
 export function Trend({

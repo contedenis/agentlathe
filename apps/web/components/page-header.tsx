@@ -13,7 +13,7 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-5">
-      <div>
+      <div className="min-w-0 [overflow-wrap:anywhere]">
         {eyebrow && (
           <p className="font-mono text-[10.5px] font-medium tracking-[0.16em] text-faint uppercase">
             {eyebrow}

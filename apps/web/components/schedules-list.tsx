@@ -42,9 +42,8 @@ import {
 import { formatInZone } from "@/lib/format";
 import type { ScheduleListRow } from "@/lib/queries-schedules";
 import { describeTrigger } from "@/lib/scheduler/calendar";
+import { schedulerRunning } from "@/lib/scheduler-status";
 import { useListFilter } from "@/lib/use-list-filter";
-
-const SCHEDULER_STALE_SECONDS = 90;
 
 export function ScheduleSheet({
   open,
@@ -81,7 +80,7 @@ export function ScheduleSheet({
 }
 
 export function SchedulerStatus({ secondsAgo }: { secondsAgo: number | null }) {
-  if (secondsAgo !== null && secondsAgo < SCHEDULER_STALE_SECONDS)
+  if (schedulerRunning(secondsAgo))
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <span className="size-1.5 rounded-full bg-success" />

@@ -24,7 +24,7 @@ Reviewing a run is the half that is hard to do without a tool: what the agent lo
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/run-review-dark.png">
-  <img alt="A recorded run: the agent loads a skill, delegates to a sub-agent and calls its tools, next to the judge's verdict on each of the agent's criteria, with one open fix draft waiting in the next tab." src="docs/images/run-review-light.png">
+  <img alt="A recorded run: the memory it loaded and the change it made, and a knowledge search with its query and the passage it found, next to the judge's verdict on each of the agent's criteria, one of them waiting for a human review." src="docs/images/run-review-light.png">
 </picture>
 
 Reading every run doesn't scale, so agents can also carry **criteria**: yes/no questions — "did it avoid promising a refund it couldn't confirm?" — that a judge model answers about each recorded run. A fix draft turns into a criterion in one click, checked on the spot against the run it came from. Verdicts the judge is unsure about land in a review queue, your review overrides the judge, and the metrics compare each criterion's pass rate across agent versions, so you can see whether the change you made actually helped. The judge is TypeSafe's Jev — through OpenRouter by default, or straight from TypeSafe or any other host that serves it — which costs a fraction of a cent per run.
@@ -33,14 +33,16 @@ Agents can also run on their own: a **schedule** sends one a message every hour,
 
 And they can remember: give an agent a **memory** — one for all its runs, one per subject the caller names, or one behind a key — and it keeps short entries it reads at the start of every run and edits itself. Every change is versioned and tied to the run that made it, the run page shows what a run read and wrote, and a full memory is consolidated by the agent's model, without losing anything you cannot restore.
 
+And they can consult documents: upload PDFs, Markdown or text files to a **knowledge** collection and attach it to an agent, which then searches it for the passages it needs, or reads it whole when it is short. The document page shows the text the agent actually reads, and the run page shows what each search returned.
+
 One more thing that belongs up here: agentlathe is **built and maintained by one person**, best-effort, with no support channel — read [Project status](#project-status) before you build anything on it.
 
 ## Requirements
 
 - **Node 22+** (`engines.node` is `>=22`; CI and the Docker images both run 22)
 - **pnpm 10** (`packageManager` pins `pnpm@10.24.0`) — Node 22/24 ship Corepack, so `corepack enable` is enough; Node 25+ dropped it, install pnpm another way (e.g. `npm install -g pnpm`) instead
-- **Postgres 16+**, or Docker if you let the compose stack provide it — Postgres is the only supported database
-- An **API key for your model provider** — OpenRouter by default, or any OpenAI-compatible endpoint (OpenAI, Anthropic's compatibility endpoint, Ollama, LiteLLM, vLLM) pointed at with `PROVIDER_BASE_URL`. Evaluating runs against criteria needs a Jev endpoint: OpenRouter's Decisions API with the same key by default, or `JUDGE_URL` + `JUDGE_API_KEY` for TypeSafe's own API or another host (see `.env.example`)
+- **Postgres 16+**, or Docker if you let the compose stack provide it — Postgres is the only supported database. The [pgvector](https://github.com/pgvector/pgvector) extension is optional and makes knowledge search faster; the compose image includes it
+- An **API key for your model provider** — OpenRouter by default, or any OpenAI-compatible endpoint (OpenAI, Anthropic's compatibility endpoint, Ollama, LiteLLM, vLLM) pointed at with `PROVIDER_BASE_URL`. Evaluating runs against criteria needs a Jev endpoint: OpenRouter's Decisions API with the same key by default, or `JUDGE_URL` + `JUDGE_API_KEY` for TypeSafe's own API or another host (see `.env.example`). Knowledge collections need the provider to serve an embeddings endpoint too, which OpenRouter does (`EMBEDDING_MODEL`, default `openai/text-embedding-3-small`)
 
 ## Quickstart with Docker
 
@@ -66,11 +68,11 @@ Seeding is optional. The `migrator` image carries the whole workspace, so run th
 docker compose run --rm migrator pnpm --filter @agentlathe/db seed
 
 # a fuller topology: 6 agents, 5 skills, 7 HTTP tools, sub-agents, an MCP server,
-# example memories and two paused schedules
+# example memories, two paused schedules and a knowledge collection
 docker compose run --rm migrator pnpm --filter @agentlathe/db seed:demo
 ```
 
-Both are idempotent — they check for their marker agent (`General assistant` / `General orchestrator`) and do nothing if it exists, except that `seed:demo` adds the example memories and schedules to a demo seeded before they existed. The schedules are created paused, because every scheduled run calls the model: activate them in **Schedules**. There is also `seed:runs`, which fabricates synthetic run metrics, some with a subject, so the `/metrics` charts have something to draw; it makes no real model calls and is **not** idempotent.
+Both are idempotent — they check for their marker agent (`General assistant` / `General orchestrator`) and do nothing if it exists, except that `seed:demo` adds the example memories, schedules and knowledge collection to a demo seeded before they existed. The collection's document is indexed by the app's next scheduler tick, which calls the embeddings endpoint. The schedules are created paused, because every scheduled run calls the model: activate them in **Schedules**. There is also `seed:runs`, which fabricates synthetic run metrics, some with a subject, so the `/metrics` charts have something to draw; it makes no real model calls and is **not** idempotent.
 
 The example tools they create point at a **public echo service** (httpbin.org / httpbingo.org) so the HTTP integration does something visible out of the box. If you chat with a seeded agent, whatever the model sends as tool input goes to a third party — swap those endpoints for your own before using the demo agents for anything real. The seeded model can be overridden with `SEED_MODEL`, which matters if you pointed `PROVIDER_BASE_URL` somewhere that does not serve OpenRouter's catalog — but compose does not forward `SEED_MODEL` from `.env` to the migrator, so pass it explicitly: `docker compose run --rm -e SEED_MODEL=... migrator pnpm --filter @agentlathe/db seed`.
 
@@ -101,7 +103,7 @@ curl http://localhost:3000/v1/chat/completions \
 
 Each active agent is also its own MCP server at `POST /mcp/agents/{agent-id}`, exposing one tool. Point Claude Desktop, Cursor or any MCP client at it.
 
-The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, run subjects, memory, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
+The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, run subjects, memory, knowledge, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 
 ## Documentation
 
@@ -109,7 +111,7 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | The manual: build agents, attach tools, call them, review the runs |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running without Docker, production deployment, reverse proxy, backups |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, memory, evaluation, runner internals |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, memory, knowledge, evaluation, runner internals |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Scripts, test levels, conventions |
 | [SECURITY.md](SECURITY.md) | Accepted tradeoffs, deferred work, how to report a vulnerability |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and what an upgrade asks of you |
@@ -121,6 +123,8 @@ Two things get stored and they are governed separately: the **run** (one row of 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key or a customer's email in a message, that is what lands in your database, in plaintext. Turning on recording for an agent that serves real users is a decision about their data, not just yours.
 
 Agents with memory also keep what they saved, with no TTL and no redaction; anyone who can call the agent picks, with `x-subject-id` or `x-memory-key`, which memory a run reads and writes.
+
+Knowledge documents are kept in full, also with no TTL and no redaction, and their text is sent to the embedding provider to be indexed.
 
 When an agent has criteria, its stored transcripts are also sent to the judge (TypeSafe's Jev, through OpenRouter's Decisions API or the host `JUDGE_URL` names) to be evaluated.
 
@@ -152,7 +156,7 @@ packages/openai-server/  The OpenAI Chat Completions wire format, in both direct
 packages/runner/         Agent runtime: builds a ToolLoopAgent from a DB-defined agent
 ```
 
-Agents, tools, skills and MCP servers live in Postgres; `packages/runner` turns a DB row into a runnable agent on every request — nothing is pre-compiled per agent, so an edit in the dashboard takes effect on the next call. **The run is the durable unit**: there is no conversation table, because `/v1` is stateless by design, so a thread is just an optional `thread_id` grouping runs together.
+Agents, tools, skills, MCP servers and knowledge documents live in Postgres; `packages/runner` turns a DB row into a runnable agent on every request — nothing is pre-compiled per agent, so an edit in the dashboard takes effect on the next call. **The run is the durable unit**: there is no conversation table, because `/v1` is stateless by design, so a thread is just an optional `thread_id` grouping runs together.
 
 Full walkthrough in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

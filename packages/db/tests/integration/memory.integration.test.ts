@@ -21,7 +21,9 @@ let memory: typeof import("../../src/memory");
 
 describe("memory writes and snapshots (requires Docker)", () => {
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:16").start();
+    container = await new PostgreSqlContainer(
+      "pgvector/pgvector:0.8.6-pg16-trixie",
+    ).start();
     process.env.DATABASE_URL = container.getConnectionUri();
     pool = new Pool({ connectionString: container.getConnectionUri() });
     db = drizzle(pool, { schema });

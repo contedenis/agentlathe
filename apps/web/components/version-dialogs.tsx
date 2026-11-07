@@ -27,6 +27,7 @@ const KIND_TITLE: Record<EntityKind, string> = {
   mcp: "MCP servers",
   sub_agent: "Sub-agents",
   memory: "Memory",
+  knowledge: "Knowledge",
 };
 
 const STATUS_LABEL: Record<EntityChange["status"], string> = {

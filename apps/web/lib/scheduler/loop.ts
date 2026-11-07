@@ -1,4 +1,5 @@
 import { closePool, getSettings } from "@agentlathe/db";
+import { processKnowledge, stopKnowledgeProcessing } from "../knowledge/engine";
 import { runRetentionSweep } from "../retention";
 import { type Execution, markInterrupted, tick } from "./engine";
 
@@ -31,6 +32,9 @@ function runLoop() {
   };
 
   const runTick = async () => {
+    void processKnowledge().catch((err) =>
+      console.error("knowledge processing failed", err),
+    );
     try {
       const sweep = ticks++ % TICKS_PER_RETENTION_SWEEP === 0;
       const [executions] = await Promise.all([
@@ -57,7 +61,12 @@ function runLoop() {
     async stop() {
       stopping = true;
       clearInterval(timer);
-      await current;
+      await Promise.all([
+        current,
+        stopKnowledgeProcessing().catch((err) =>
+          console.error("stopping knowledge processing failed", err),
+        ),
+      ]);
       if (await settledWithin([...inFlight.values()], DRAIN_MS)) return;
       abort.abort();
       await settledWithin([...inFlight.values()], ABORT_SETTLE_MS);
