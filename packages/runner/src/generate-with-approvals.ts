@@ -4,6 +4,7 @@ import {
   buildDashboardToolApproval,
   buildHeadlessToolApproval,
 } from "./approval";
+import type { RunContext } from "./context";
 import type { AgentRow } from "./loaders";
 import { type AgentRunStats, describeCall } from "./recording";
 import { buildAgentRuntime } from "./runtime";
@@ -29,6 +30,7 @@ export async function generateWithApprovals(
     maxRounds?: number;
     abortSignal?: AbortSignal;
     onStats?: (stats: AgentRunStats) => void;
+    run?: RunContext;
   } = {},
 ): Promise<{ text: string; stats: AgentRunStats }> {
   const {
@@ -38,6 +40,7 @@ export async function generateWithApprovals(
     maxRounds = 8,
     abortSignal,
     onStats,
+    run,
   } = options;
   const buildApproval = askApproval
     ? buildDashboardToolApproval
@@ -55,6 +58,7 @@ export async function generateWithApprovals(
   } = await buildAgentRuntime(agent, {
     buildApproval,
     stopWhen: ({ steps }) => stepsUsed + steps.length >= maxSteps,
+    run,
   });
 
   let messages: ModelMessage[] = [{ role: "user", content: message }];

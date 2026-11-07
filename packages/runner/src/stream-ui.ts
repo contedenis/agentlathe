@@ -6,6 +6,7 @@ import {
   type UIMessage,
 } from "ai";
 import { buildDashboardToolApproval } from "./approval";
+import type { RunContext } from "./context";
 import type { AgentRow } from "./loaders";
 import { type AgentRunStats, deniedApprovalCalls } from "./recording";
 import { buildAgentRuntime } from "./runtime";
@@ -28,9 +29,10 @@ export async function streamAgentForUI(
       durationMs: number;
       error?: unknown;
     }) => Promise<string | null>;
+    run?: RunContext;
   } = {},
 ): Promise<Response> {
-  const { onTranscript, abortSignal, onRunEnd } = options;
+  const { onTranscript, abortSignal, onRunEnd, run } = options;
   const {
     agent: runtime,
     cleanup,
@@ -38,6 +40,7 @@ export async function streamAgentForUI(
     toolKinds,
   } = await buildAgentRuntime(agent, {
     buildApproval: buildDashboardToolApproval,
+    run,
   });
 
   try {

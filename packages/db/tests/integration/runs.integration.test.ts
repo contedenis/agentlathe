@@ -82,7 +82,9 @@ describe("recordAgentRun / deleteExpiredAgentRuns (requires Docker)", () => {
       agentId: agent.id,
       source: "v1",
       threadId: "thread-7",
+      subjectId: "user-42",
       durationMs: 12,
+      warnings: [{ code: "memory_missing_subject", message: "No subject." }],
     });
     expect(runId).toEqual(expect.any(String));
     if (!runId) throw new Error("expected a run id");
@@ -104,6 +106,10 @@ describe("recordAgentRun / deleteExpiredAgentRuns (requires Docker)", () => {
 
     const [run] = await runsFor(agent.id);
     expect(run.threadId).toBe("thread-7");
+    expect(run.subjectId).toBe("user-42");
+    expect(run.warnings).toEqual([
+      { code: "memory_missing_subject", message: "No subject." },
+    ]);
   });
 
   it("records only the sources that are enabled", async () => {

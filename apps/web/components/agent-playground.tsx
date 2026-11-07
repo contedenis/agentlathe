@@ -1,5 +1,6 @@
 "use client";
 
+import { RUN_LABEL_MAX_LENGTH } from "@agentlathe/db/constants";
 import {
   DefaultChatTransport,
   isToolUIPart,
@@ -33,6 +34,8 @@ import {
 } from "@/components/transcript-history";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { FixDraft } from "@/lib/fix-drafts";
 
@@ -113,6 +116,10 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
     draft: FixDraft;
   } | null>(null);
   const threadIdRef = useRef<string | undefined>(undefined);
+  const [subjectId, setSubjectId] = useState("");
+  const subjectIdRef = useRef("");
+  const [memoryKey, setMemoryKey] = useState("");
+  const memoryKeyRef = useRef("");
 
   const {
     messages,
@@ -125,7 +132,11 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
   } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/agents/${agentId}/chat`,
-      body: () => ({ threadId: threadIdRef.current }),
+      body: () => ({
+        threadId: threadIdRef.current,
+        subjectId: subjectIdRef.current.trim() || undefined,
+        memoryKey: memoryKeyRef.current.trim() || undefined,
+      }),
       fetch: async (input, init) => {
         const response = await fetch(input, init);
         const threadId = response.headers.get("x-thread-id");
@@ -267,17 +278,55 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
       )}
 
       <div className="flex flex-col gap-2">
-        {canRegenerate && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => regenerate()}
-            className="self-start text-muted-foreground"
-          >
-            <RotateCcwIcon />
-            Regenerate
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canRegenerate && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => regenerate()}
+              className="text-muted-foreground"
+            >
+              <RotateCcwIcon />
+              Regenerate
+            </Button>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <Label
+              htmlFor="playground-subject"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              Act as subject
+            </Label>
+            <Input
+              id="playground-subject"
+              value={subjectId}
+              onChange={(event) => {
+                setSubjectId(event.target.value);
+                subjectIdRef.current = event.target.value;
+              }}
+              placeholder="none"
+              maxLength={RUN_LABEL_MAX_LENGTH}
+              className="h-7 w-40 text-xs"
+            />
+            <Label
+              htmlFor="playground-memory-key"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              Memory key
+            </Label>
+            <Input
+              id="playground-memory-key"
+              value={memoryKey}
+              onChange={(event) => {
+                setMemoryKey(event.target.value);
+                memoryKeyRef.current = event.target.value;
+              }}
+              placeholder="none"
+              maxLength={RUN_LABEL_MAX_LENGTH}
+              className="h-7 w-32 text-xs"
+            />
+          </div>
+        </div>
         <div className="flex gap-2">
           <Textarea
             value={input}

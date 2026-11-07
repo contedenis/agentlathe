@@ -2,6 +2,7 @@
 
 import {
   Bot,
+  Brain,
   CalendarClock,
   ChartNoAxesColumn,
   Home,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/skills", label: "Skills", icon: Sparkles },
   { href: "/mcp-servers", label: "MCP Servers", icon: Plug },
+  { href: "/memory", label: "Memory", icon: Brain },
   { href: "/schedules", label: "Schedules", icon: CalendarClock },
   { href: "/runs", label: "Runs", icon: MessagesSquare },
   { href: "/metrics", label: "Metrics", icon: ChartNoAxesColumn },

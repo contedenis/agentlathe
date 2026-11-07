@@ -8,9 +8,11 @@ vi.mock("@agentlathe/db", async (importOriginal) => ({
   saveRunTranscript: vi.fn(),
 }));
 vi.mock("./versions", () => ({ resolveAgentVersion: vi.fn() }));
+vi.mock("./memory", () => ({ commitMemoryWrites: vi.fn(async () => []) }));
 
 import { getSettings, recordAgentRun, saveRunTranscript } from "@agentlathe/db";
 import type { AgentRow } from "./loaders";
+import { commitMemoryWrites, type MemoryDraft } from "./memory";
 import {
   addChildRunStats,
   createRunRecorder,
@@ -179,6 +181,20 @@ describe("addChildRunStats — folding a sub-agent into its parent", () => {
     expect(target.calls).toHaveLength(1);
   });
 
+  it("carries the child's MCP failures and warnings up", () => {
+    const target = emptyRunStats();
+    const warning = { code: "memory_missing_subject", message: "no subject" };
+
+    addChildRunStats(target, {
+      ...emptyRunStats(),
+      mcpFailures: ["Jira"],
+      warnings: [warning],
+    });
+
+    expect(target.mcpFailures).toEqual(["Jira"]);
+    expect(target.warnings).toEqual([warning]);
+  });
+
   it("tokens stay null when the child reported none", () => {
     const target = emptyRunStats();
     addChildRunStats(target, emptyRunStats());
@@ -300,6 +316,7 @@ describe("createRunRecorder — the single writer of the run record", () => {
       agent: agentRow(),
       source: "v1",
       threadId: "t-1",
+      subjectId: "user-42",
     });
     const runId = await recorder.record({ stats: emptyRunStats() });
 
@@ -309,12 +326,56 @@ describe("createRunRecorder — the single writer of the run record", () => {
         agentId: "agent-1",
         source: "v1",
         threadId: "t-1",
+        subjectId: "user-42",
         model: "openrouter/model",
         status: "ok",
         error: null,
         durationMs: expect.any(Number),
       }),
     );
+  });
+
+  it("commits the run's memory writes once the run row exists, failed runs and untracked ones included", async () => {
+    const writes = [
+      { storeId: "store-a", ops: [] },
+    ] as unknown as MemoryDraft[];
+    await createRunRecorder({ agent: agentRow(), source: "v1" }).record({
+      stats: { ...emptyRunStats(), memoryWrites: writes },
+      error: new Error("boom"),
+    });
+    vi.mocked(recordAgentRun).mockResolvedValueOnce(null);
+    await createRunRecorder({ agent: agentRow(), source: "mcp" }).record({
+      stats: { ...emptyRunStats(), memoryWrites: writes },
+    });
+    await createRunRecorder({ agent: agentRow(), source: "v1" }).record({
+      stats: emptyRunStats(),
+    });
+
+    expect(commitMemoryWrites).toHaveBeenCalledTimes(2);
+    expect(commitMemoryWrites).toHaveBeenNthCalledWith(1, writes, "run-1");
+    expect(commitMemoryWrites).toHaveBeenNthCalledWith(2, writes, null);
+    expect(recordAgentRun).toHaveBeenCalledWith(
+      expect.not.objectContaining({ memoryWrites: expect.anything() }),
+    );
+  });
+
+  it("reports the memories it saved, so they can be compacted", async () => {
+    const saved = [{ storeId: "store-a", partitionKey: "agent-1" }];
+    vi.mocked(commitMemoryWrites).mockResolvedValueOnce(saved);
+    const onMemoryCommitted = vi.fn();
+
+    await createRunRecorder({
+      agent: agentRow(),
+      source: "v1",
+      onMemoryCommitted,
+    }).record({
+      stats: {
+        ...emptyRunStats(),
+        memoryWrites: [{ storeId: "store-a" }] as unknown as MemoryDraft[],
+      },
+    });
+
+    expect(onMemoryCommitted).toHaveBeenCalledWith(saved);
   });
 
   it("normalizes errors: Error message, or String(error) for the rest", async () => {
@@ -368,7 +429,11 @@ describe("createRunRecorder — the single writer of the run record", () => {
     );
     expect(recordAgentRun).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ source: "v1", scheduleId: null }),
+      expect.objectContaining({
+        source: "v1",
+        scheduleId: null,
+        subjectId: null,
+      }),
     );
   });
 

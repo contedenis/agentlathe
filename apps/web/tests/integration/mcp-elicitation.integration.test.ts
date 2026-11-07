@@ -70,19 +70,28 @@ const textCompletion = (text: string) => ({
   usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
 });
 
-function mcpRequest(body: unknown, sessionId?: string) {
+function mcpRequest(
+  body: unknown,
+  sessionId?: string,
+  headers: Record<string, string> = {},
+) {
   return new Request("http://localhost/mcp/agents/x", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+      ...headers,
     },
     body: JSON.stringify(body),
   });
 }
 
-function callMcp(body: unknown, sessionId?: string) {
-  return route.POST(mcpRequest(body, sessionId), {
+function callMcp(
+  body: unknown,
+  sessionId?: string,
+  headers: Record<string, string> = {},
+) {
+  return route.POST(mcpRequest(body, sessionId, headers), {
     params: Promise.resolve({ id: agent.id }),
   });
 }
@@ -136,7 +145,7 @@ async function initialize(sessionId: string, capabilities: object) {
   expect(res.status).toBe(200);
 }
 
-function askAgent(sessionId?: string) {
+function askAgent(sessionId?: string, headers: Record<string, string> = {}) {
   return callMcp(
     {
       jsonrpc: "2.0",
@@ -148,6 +157,7 @@ function askAgent(sessionId?: string) {
       },
     },
     sessionId,
+    headers,
   );
 }
 
@@ -335,5 +345,36 @@ describe("MCP elicitation wiring (requires Docker)", () => {
     ).toHaveLength(0);
     expect(frames.at(-1)?.result?.content?.[0]?.text).toBe("no session");
     expect(toolExecHits).toBe(0);
+  });
+
+  it("records the subject the client sends in x-subject-id", async () => {
+    await initialize("sess-subject", {});
+    completions = [textCompletion("hello subject")];
+
+    await readSse(
+      await askAgent("sess-subject", { "x-subject-id": "user-42" }),
+    );
+
+    const run = await latestRun();
+    expect(run.source).toBe("mcp");
+    expect(run.subjectId).toBe("user-42");
+  });
+
+  it("refuses a subject longer than 200 characters without running the agent", async () => {
+    await initialize("sess-long-subject", {});
+    const before = await latestRun();
+
+    const res = await askAgent("sess-long-subject", {
+      "x-subject-id": "u".repeat(201),
+    });
+
+    expect(await res.json()).toMatchObject({
+      id: 7,
+      error: {
+        code: -32602,
+        message: "x-subject-id must be at most 200 characters.",
+      },
+    });
+    expect((await latestRun())?.id).toBe(before?.id);
   });
 });

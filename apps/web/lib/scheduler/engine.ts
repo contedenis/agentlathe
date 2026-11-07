@@ -33,6 +33,8 @@ type Claim = {
   occurrenceId: string;
   scheduleId: string;
   scheduleName: string;
+  subjectId: string | null;
+  memoryKey: string | null;
   agentId: string;
   input: string;
   timezone: string;
@@ -204,6 +206,8 @@ export async function runNow(scheduleId: string): Promise<RunNowResult> {
         occurrenceId: occurrence.id,
         scheduleId,
         scheduleName: schedule.name,
+        subjectId: schedule.subjectId,
+        memoryKey: schedule.memoryKey,
         agentId: schedule.agentId,
         input: schedule.input,
         timezone: schedule.timezone,
@@ -309,6 +313,8 @@ async function claimDue(): Promise<Claim[]> {
           occurrenceId,
           scheduleId: schedule.id,
           scheduleName: schedule.name,
+          subjectId: schedule.subjectId,
+          memoryKey: schedule.memoryKey,
           agentId: schedule.agentId,
           input: schedule.input,
           timezone: schedule.timezone,
@@ -375,12 +381,14 @@ async function execute(claim: Claim, signal: AbortSignal): Promise<Outcome> {
     agent,
     source: "schedule",
     scheduleId: claim.scheduleId,
+    subjectId: claim.subjectId,
   });
   let stats: AgentRunStats | undefined;
   try {
     const { text } = await generateWithApprovals(agent, message, {
       abortSignal: signal,
       headlessApproval: buildScheduledToolApproval,
+      run: { subjectId: claim.subjectId, memoryKey: claim.memoryKey },
       onStats: (runStats) => {
         stats = runStats;
       },

@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -21,6 +22,7 @@ import {
   DEFAULT_CRITERION_FAIL_BELOW,
   DEFAULT_CRITERION_PASS_ABOVE,
   DEFAULT_JUDGE_MODEL,
+  DEFAULT_MEMORY_CHAR_LIMIT,
   DEFAULT_TRACK_DASHBOARD_RUNS,
   DEFAULT_TRACK_MCP_RUNS,
   DEFAULT_TRACK_SCHEDULE_RUNS,
@@ -28,9 +30,18 @@ import {
   DEFAULT_TRANSCRIPT_TTL_DAYS,
   FIX_DRAFT_CATEGORIES,
   FIX_DRAFT_STATUSES,
+  MAX_MEMORY_CHAR_LIMIT,
+  MEMORY_AUTHORS,
+  MEMORY_COMPACTION_STATUSES,
+  MEMORY_ENTRY_OPS,
+  MEMORY_PROPOSAL_OPS,
+  MEMORY_PROPOSAL_STATUSES,
+  MEMORY_SCOPES,
+  type MemorySeen,
   REVIEWED_VERDICTS,
   RUN_EVALUATION_SKIP_REASONS,
   RUN_EVALUATION_STATUSES,
+  type RunWarning,
   SCHEDULE_FREQUENCIES,
   SCHEDULE_OCCURRENCE_STATUSES,
 } from "./constants";
@@ -136,6 +147,8 @@ export const schedules = pgTable(
     startDate: date("start_date"),
     timezone: text("timezone").notNull(),
     input: text("input").notNull(),
+    subjectId: text("subject_id"),
+    memoryKey: text("memory_key"),
     isActive: boolean("is_active").notNull().default(true),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
@@ -191,6 +204,7 @@ export const agentRuns = pgTable(
     }),
     source: text("source").notNull(),
     threadId: text("thread_id"),
+    subjectId: text("subject_id"),
     status: text("status").notNull().default("ok"),
     model: text("model"),
     durationMs: integer("duration_ms").notNull(),
@@ -201,6 +215,8 @@ export const agentRuns = pgTable(
     approvalsRequested: integer("approvals_requested").notNull().default(0),
     approvalsGranted: integer("approvals_granted").notNull().default(0),
     mcpFailures: jsonb("mcp_failures").$type<string[]>(),
+    warnings: jsonb("warnings").$type<RunWarning[]>(),
+    memorySeen: jsonb("memory_seen").$type<MemorySeen[]>(),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -211,6 +227,7 @@ export const agentRuns = pgTable(
     index("agent_runs_created_at_idx").on(table.createdAt),
     index("agent_runs_source_idx").on(table.source),
     index("agent_runs_thread_id_idx").on(table.threadId),
+    index("agent_runs_subject_id_idx").on(table.subjectId),
     index("agent_runs_agent_version_id_idx").on(table.agentVersionId),
     index("agent_runs_schedule_id_idx").on(table.scheduleId),
     check(
@@ -517,6 +534,207 @@ export const agentMcpTools = pgTable(
   ],
 );
 
+export const memoryStores = pgTable(
+  "memory_stores",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    scope: text("scope").notNull(),
+    ownerAgentId: uuid("owner_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    memoryKey: text("memory_key"),
+    purpose: text("purpose").notNull(),
+    charLimit: integer("char_limit")
+      .notNull()
+      .default(DEFAULT_MEMORY_CHAR_LIMIT),
+    requireApproval: boolean("require_approval").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("memory_stores_owner_agent_id_scope_unique").on(
+      table.ownerAgentId,
+      table.scope,
+    ),
+    check(
+      "memory_stores_scope_check",
+      sql`${table.scope} in (${sqlInList(MEMORY_SCOPES)})`,
+    ),
+    check(
+      "memory_stores_memory_key_check",
+      sql`(${table.scope} = 'custom') = (${table.memoryKey} is not null)`,
+    ),
+    check(
+      "memory_stores_char_limit_check",
+      sql`${table.charLimit} between 1 and ${sql.raw(String(MAX_MEMORY_CHAR_LIMIT))}`,
+    ),
+  ],
+);
+
+export const memoryPartitions = pgTable(
+  "memory_partitions",
+  {
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => memoryStores.id, { onDelete: "cascade" }),
+    partitionKey: text("partition_key").notNull(),
+    revision: integer("revision").notNull().default(0),
+    chars: integer("chars").notNull().default(0),
+    nextEntryNumber: integer("next_entry_number").notNull().default(1),
+    compactedAt: timestamp("compacted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.storeId, table.partitionKey] })],
+);
+
+export const memoryEntries = pgTable(
+  "memory_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull(),
+    partitionKey: text("partition_key").notNull(),
+    shortId: text("short_id").notNull(),
+    pinned: boolean("pinned").notNull().default(false),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.storeId, table.partitionKey],
+      foreignColumns: [memoryPartitions.storeId, memoryPartitions.partitionKey],
+      name: "memory_entries_partition_fk",
+    }).onDelete("cascade"),
+    unique("memory_entries_store_id_partition_key_short_id_unique").on(
+      table.storeId,
+      table.partitionKey,
+      table.shortId,
+    ),
+  ],
+);
+
+export const memoryEntryVersions = pgTable(
+  "memory_entry_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entryId: uuid("entry_id")
+      .notNull()
+      .references(() => memoryEntries.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    op: text("op").notNull(),
+    content: text("content"),
+    runId: uuid("run_id").references(() => agentRuns.id, {
+      onDelete: "set null",
+    }),
+    author: text("author").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("memory_entry_versions_entry_id_revision_idx").on(
+      table.entryId,
+      table.revision,
+    ),
+    index("memory_entry_versions_run_id_idx").on(table.runId),
+    check(
+      "memory_entry_versions_op_check",
+      sql`${table.op} in (${sqlInList(MEMORY_ENTRY_OPS)})`,
+    ),
+    check(
+      "memory_entry_versions_author_check",
+      sql`${table.author} in (${sqlInList(MEMORY_AUTHORS)})`,
+    ),
+  ],
+);
+
+export const memoryProposals = pgTable(
+  "memory_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull(),
+    partitionKey: text("partition_key").notNull(),
+    op: text("op").notNull(),
+    entryId: uuid("entry_id").references(() => memoryEntries.id, {
+      onDelete: "cascade",
+    }),
+    content: text("content"),
+    baseRevision: integer("base_revision").notNull(),
+    runId: uuid("run_id").references(() => agentRuns.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("pending"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.storeId, table.partitionKey],
+      foreignColumns: [memoryPartitions.storeId, memoryPartitions.partitionKey],
+      name: "memory_proposals_partition_fk",
+    }).onDelete("cascade"),
+    index("memory_proposals_run_id_idx").on(table.runId),
+    check(
+      "memory_proposals_op_check",
+      sql`${table.op} in (${sqlInList(MEMORY_PROPOSAL_OPS)})`,
+    ),
+    check(
+      "memory_proposals_status_check",
+      sql`${table.status} in (${sqlInList(MEMORY_PROPOSAL_STATUSES)})`,
+    ),
+  ],
+);
+
+export const memoryCompactions = pgTable(
+  "memory_compactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull(),
+    partitionKey: text("partition_key").notNull(),
+    fromRevision: integer("from_revision").notNull(),
+    toRevision: integer("to_revision"),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    operations: jsonb("operations"),
+    status: text("status").notNull(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.storeId, table.partitionKey],
+      foreignColumns: [memoryPartitions.storeId, memoryPartitions.partitionKey],
+      name: "memory_compactions_partition_fk",
+    }).onDelete("cascade"),
+    check(
+      "memory_compactions_status_check",
+      sql`${table.status} in (${sqlInList(MEMORY_COMPACTION_STATUSES)})`,
+    ),
+  ],
+);
+
 export const agentsRelations = relations(agents, ({ many }) => ({
   agentSkills: many(agentSkills),
   agentTools: many(agentTools),
@@ -527,6 +745,7 @@ export const agentsRelations = relations(agents, ({ many }) => ({
   versions: many(agentVersions),
   criteria: many(agentCriteria),
   schedules: many(schedules),
+  memoryStores: many(memoryStores),
 }));
 
 export const agentVersionsRelations = relations(
@@ -676,5 +895,12 @@ export const agentMcpToolsRelations = relations(agentMcpTools, ({ one }) => ({
   server: one(mcpServers, {
     fields: [agentMcpTools.serverId],
     references: [mcpServers.id],
+  }),
+}));
+
+export const memoryStoresRelations = relations(memoryStores, ({ one }) => ({
+  owner: one(agents, {
+    fields: [memoryStores.ownerAgentId],
+    references: [agents.id],
   }),
 }));

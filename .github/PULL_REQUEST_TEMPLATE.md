@@ -1,4 +1,4 @@
-Reviews are best-effort and not guaranteed (single maintainer — see [CONTRIBUTING.md](../CONTRIBUTING.md)). Small, tested, focused PRs are the ones that get merged.
+Reviews are best-effort and not guaranteed (single maintainer — see [CONTRIBUTING.md](https://github.com/contedenis/agentlathe/blob/main/CONTRIBUTING.md)). Small, tested, focused PRs are the ones that get merged.
 
 ## Summary
 
@@ -13,6 +13,7 @@ Reviews are best-effort and not guaranteed (single maintainer — see [CONTRIBUT
 - [ ] `pnpm lint` passes
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes
+- [ ] `pnpm build` passes
 - [ ] Tests added/updated for new changes
 - [ ] Documentation updated if behavior changed
 - [ ] `CHANGELOG.md` has an entry under `Unreleased` if users can see the change

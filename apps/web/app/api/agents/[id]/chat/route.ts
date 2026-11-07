@@ -1,3 +1,4 @@
+import { RUN_LABEL_MAX_LENGTH } from "@agentlathe/db/constants";
 import {
   loadActiveAgent,
   safeValidateUIMessages,
@@ -11,6 +12,8 @@ import { createRecorder } from "@/lib/run-recorder";
 const chatBodySchema = z.object({
   messages: z.array(z.unknown()),
   threadId: z.string().max(200).optional(),
+  subjectId: z.string().trim().max(RUN_LABEL_MAX_LENGTH).optional(),
+  memoryKey: z.string().trim().max(RUN_LABEL_MAX_LENGTH).optional(),
 });
 
 export async function POST(
@@ -43,13 +46,22 @@ export async function POST(
 
   // No thread row to look up: the id only groups runs and the client hands it back.
   const threadId = parsed.data.threadId ?? crypto.randomUUID();
-  const recorder = createRecorder({ agent, source: "dashboard", threadId });
+  const recorder = createRecorder({
+    agent,
+    source: "dashboard",
+    threadId,
+    subjectId: parsed.data.subjectId || null,
+  });
 
   try {
     const response = await streamAgentForUI(agent, messages, {
       onTranscript: (input, output) => recorder.attachTranscript(input, output),
       abortSignal: req.signal,
       onRunEnd: (outcome) => recorder.record(outcome),
+      run: {
+        subjectId: parsed.data.subjectId || null,
+        memoryKey: parsed.data.memoryKey || null,
+      },
     });
 
     const headers = new Headers(response.headers);

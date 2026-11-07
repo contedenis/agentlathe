@@ -26,6 +26,8 @@ const row = (overrides: Partial<ScheduleListRow>): ScheduleListRow => ({
   startDate: null,
   timezone: "UTC",
   input: "Summarize.",
+  subjectId: null,
+  memoryKey: null,
   isActive: true,
   nextRunAt: new Date("2026-10-19T09:00:00Z"),
   consecutiveFailures: 0,

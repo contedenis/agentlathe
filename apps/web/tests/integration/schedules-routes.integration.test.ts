@@ -180,6 +180,26 @@ describe("schedule routes (requires Docker)", () => {
     }
   });
 
+  it("stores the subject and memory key trimmed, and an empty one as none", async () => {
+    const { body: created } = await create({
+      ...daily(),
+      subjectId: " user-42 ",
+      memoryKey: "",
+    });
+    expect(created).toMatchObject({ subjectId: "user-42", memoryKey: null });
+
+    const updated = await (
+      await item.PATCH(
+        jsonRequest("PATCH", { subjectId: "", memoryKey: "team-ops" }),
+        params(created.id),
+      )
+    ).json();
+    expect(updated).toMatchObject({ subjectId: null, memoryKey: "team-ops" });
+
+    const { res } = await create({ ...daily(), subjectId: "u".repeat(201) });
+    expect(res.status).toBe(400);
+  });
+
   it("keeps only the fields its preset uses", async () => {
     const { body } = await create({
       ...daily(),

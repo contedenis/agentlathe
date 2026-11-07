@@ -11,13 +11,24 @@ export {
   buildScheduledToolApproval,
 } from "./approval";
 export {
+  CompactionError,
+  type CompactionPlan,
+  planCompaction,
+} from "./compaction";
+export type { RunContext } from "./context";
+export {
   type AgentProgress,
   generateWithApprovals,
   type PendingApproval,
 } from "./generate-with-approvals";
-export { buildAuth, PROVIDER_BASE_URL } from "./helpers";
+export { buildAuth, getContextLimit, PROVIDER_BASE_URL } from "./helpers";
 export { compileInputSchema } from "./input-schema";
 export { type AgentRow, loadActiveAgent } from "./loaders";
+export {
+  type MemoryPartitionRef,
+  type MemoryStoreView,
+  renderMemorySection,
+} from "./memory";
 export {
   type AgentRunStats,
   createRunRecorder,

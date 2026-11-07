@@ -200,7 +200,11 @@ export function assembleCapabilities(
     };
   });
   for (const stats of statsByKey.values()) {
-    capabilities.push({ ...stats, displayName: stats.name, configured: false });
+    capabilities.push({
+      ...stats,
+      displayName: stats.name,
+      configured: stats.kind === "memory",
+    });
   }
   capabilities.sort(
     (a, b) =>

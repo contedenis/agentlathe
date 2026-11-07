@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -110,6 +110,7 @@ export function RunsList({
   total,
   query,
   source,
+  subject,
   evaluation,
   needsReviewTotal,
   page,
@@ -119,6 +120,7 @@ export function RunsList({
   total: number;
   query: string;
   source: string;
+  subject: string;
   evaluation: EvaluationFilter | "";
   needsReviewTotal: number;
   page: number;
@@ -134,10 +136,12 @@ export function RunsList({
     nextSource: string,
     nextEvaluation: EvaluationFilter | "",
     nextPage: number,
+    nextSubject = subject,
   ) {
     const params = new URLSearchParams();
     if (nextQuery.trim()) params.set("q", nextQuery.trim());
     if (nextSource) params.set("source", nextSource);
+    if (nextSubject) params.set("subject", nextSubject);
     if (nextEvaluation) params.set("evaluation", nextEvaluation);
     if (nextPage > 1) params.set("page", String(nextPage));
     const qs = params.toString();
@@ -202,6 +206,18 @@ export function RunsList({
             </Button>
           ))}
         </FilterGroup>
+        {subject && (
+          <Button
+            variant="secondary"
+            size="sm"
+            nativeButton={false}
+            render={<Link href={hrefFor(query, source, evaluation, 1, "")} />}
+            aria-label={`Clear subject filter ${subject}`}
+          >
+            Subject <span className="font-mono text-[12px]">{subject}</span>
+            <XIcon />
+          </Button>
+        )}
         <span className="font-mono text-[11px] text-faint">
           {total} {total === 1 ? "result" : "results"}
         </span>
@@ -249,6 +265,20 @@ export function RunsList({
                   >
                     {run.agentName}
                   </Link>
+                  {run.subjectId && (
+                    <Link
+                      href={hrefFor(
+                        query,
+                        source,
+                        evaluation,
+                        1,
+                        run.subjectId,
+                      )}
+                      className="block font-mono text-[11px] text-faint hover:underline"
+                    >
+                      {run.subjectId}
+                    </Link>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className="font-mono text-[11px] text-faint uppercase">

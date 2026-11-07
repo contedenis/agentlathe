@@ -22,6 +22,8 @@ const saved = (overrides: Partial<ScheduleFormValues>): ScheduleFormValues => ({
   startDate: null,
   timezone: "UTC",
   input: "Summarize {{date}}.",
+  subjectId: null,
+  memoryKey: null,
   ...overrides,
 });
 
@@ -64,6 +66,8 @@ describe("ScheduleForm", () => {
         startDate: null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         input: "Summarize the news.",
+        subjectId: null,
+        memoryKey: null,
       }),
     });
     expect(onSuccess).toHaveBeenCalled();
@@ -136,6 +140,29 @@ describe("ScheduleForm", () => {
       weekday: 3,
       startDate: null,
       timezone: "UTC",
+    });
+  });
+
+  it("sends the subject trimmed and clears the memory key when emptied", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue(undefined);
+    render(
+      <ScheduleForm
+        initial={saved({ memoryKey: "team-ops" })}
+        agents={agents}
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Subject"), "  user-42 ");
+    await user.clear(screen.getByLabelText("Memory key"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const [, init] = vi.mocked(apiRequest).mock.calls[0];
+    expect(JSON.parse(init?.body as string)).toMatchObject({
+      subjectId: "user-42",
+      memoryKey: null,
     });
   });
 

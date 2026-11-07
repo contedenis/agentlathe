@@ -1,12 +1,15 @@
 import type { AgentVersionSnapshot } from "@agentlathe/runner";
 import { structuredPatch } from "diff";
 
-export type VersionSnapshot = AgentVersionSnapshot;
+export type VersionSnapshot = AgentVersionSnapshot & {
+  memoryStores: NonNullable<AgentVersionSnapshot["memoryStores"]>;
+};
 
 type Skill = VersionSnapshot["skills"][number];
 type HttpTool = VersionSnapshot["httpTools"][number];
 type McpServer = VersionSnapshot["mcpServers"][number];
 type SubAgent = VersionSnapshot["subAgents"][number];
+type MemoryStore = VersionSnapshot["memoryStores"][number];
 
 export type DiffLine = {
   kind: "context" | "added" | "removed";
@@ -18,7 +21,7 @@ export type FieldChange =
   | { label: string; kind: "text"; hunks: DiffLine[][] }
   | { label: string; kind: "note"; text: string };
 
-export type EntityKind = "skill" | "tool" | "mcp" | "sub_agent";
+export type EntityKind = "skill" | "tool" | "mcp" | "sub_agent" | "memory";
 
 export type EntityChange = {
   kind: EntityKind;
@@ -53,6 +56,7 @@ export function readSnapshot(raw: unknown): VersionSnapshot {
       approvalToolNames: asArray<string>(server.approvalToolNames),
     })),
     subAgents: asArray<SubAgent>(value.subAgents),
+    memoryStores: asArray<MemoryStore>(value.memoryStores),
     descendants: asArray<{ slug: string; hash: string }>(value.descendants),
   };
 }
@@ -171,6 +175,22 @@ const SUB_AGENT_FIELDS: FieldSpec<SubAgent>[] = [
   },
 ];
 
+const MEMORY_FIELDS: FieldSpec<MemoryStore>[] = [
+  { label: "Scope", kind: "value", read: (s) => asString(s.scope) },
+  { label: "Purpose", kind: "text", read: (s) => asString(s.purpose) },
+  {
+    label: "Character limit",
+    kind: "value",
+    read: (s) => String(s.charLimit ?? ""),
+  },
+  {
+    label: "Requires approval",
+    kind: "value",
+    read: (s) => yesNo(Boolean(s.requireApproval)),
+  },
+  { label: "x-memory-key", kind: "value", read: (s) => asString(s.memoryKey) },
+];
+
 function descendantChanges(
   from: VersionSnapshot,
   to: VersionSnapshot,
@@ -209,6 +229,7 @@ const KIND_NOUN: Record<EntityKind, [string, string]> = {
   tool: ["tool", "tools"],
   mcp: ["MCP server", "MCP servers"],
   sub_agent: ["sub-agent", "sub-agents"],
+  memory: ["memory", "memories"],
 };
 
 function summarize(agent: FieldChange[], entities: EntityChange[]): string {
@@ -279,6 +300,13 @@ export function diffVersions(fromRaw: unknown, toRaw: unknown): VersionChanges {
       to.mcpServers,
       (s) => s.name,
       MCP_FIELDS,
+    ),
+    ...diffEntities(
+      "memory",
+      from.memoryStores,
+      to.memoryStores,
+      (s) => s.name,
+      MEMORY_FIELDS,
     ),
   ];
   const subAgents = diffEntities(

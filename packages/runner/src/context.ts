@@ -1,3 +1,5 @@
+import type { MemoryDrafts } from "./memory";
+
 export const MAX_DEPTH = 5;
 export const MAX_SUB_AGENT_CALLS = 20;
 
@@ -7,4 +9,13 @@ export type RuntimeCtx = {
   callStack: Set<string>;
   depth: number;
   subAgentBudget: { remaining: number };
+  run: RunContext;
+  memoryDrafts: MemoryDrafts;
 };
+
+export type RunContext = {
+  subjectId: string | null;
+  memoryKey: string | null;
+};
+
+export const NO_RUN_CONTEXT: RunContext = { subjectId: null, memoryKey: null };

@@ -1,8 +1,10 @@
+import { renderMemorySection } from "@agentlathe/runner";
 import { TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BreadcrumbTitle } from "@/components/breadcrumb-title";
 import { LIST_SHELL_CLASS } from "@/components/list-search";
+import { RunMemoryChanges } from "@/components/run-memory-changes";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { RunWorkspace } from "@/components/run-workspace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,6 +12,7 @@ import { VersionConfigDialog } from "@/components/version-dialogs";
 import { toFixDrafts } from "@/lib/fix-drafts";
 import { formatInZone } from "@/lib/format";
 import { getRunForReview } from "@/lib/queries";
+import { getMemoryLoaded, getRunMemoryChanges } from "@/lib/queries-memory";
 import { sourceLabel } from "@/lib/run-sources";
 import { toTranscriptMessages } from "@/lib/transcript";
 import { readSnapshot } from "@/lib/version-diff";
@@ -22,6 +25,14 @@ export default async function RunDetailPage({
   const { id } = await params;
   const run = await getRunForReview(id);
   if (!run) notFound();
+  const [memoryLoaded, memoryChanges] = await Promise.all([
+    getMemoryLoaded(run.memorySeen),
+    getRunMemoryChanges(run.id),
+  ]);
+  const memoryStores = memoryLoaded.flatMap((store) =>
+    "missing" in store ? [] : [store],
+  );
+  const memoryMissing = memoryLoaded.length - memoryStores.length;
 
   const messages = [
     ...toTranscriptMessages(run.input, "in"),
@@ -83,6 +94,20 @@ export default async function RunDetailPage({
               <span className="font-mono text-[12px]">{run.model}</span>
             </>
           )}
+          {run.subjectId && (
+            <>
+              <span aria-hidden>·</span>
+              <span>
+                Subject{" "}
+                <Link
+                  href={`/runs?subject=${encodeURIComponent(run.subjectId)}`}
+                  className="font-mono text-[12px] text-foreground hover:underline"
+                >
+                  {run.subjectId}
+                </Link>
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -142,6 +167,61 @@ export default async function RunDetailPage({
           </AlertDescription>
         </Alert>
       )}
+
+      {(run.warnings?.length ?? 0) > 0 && (
+        <Alert className="lg:shrink-0">
+          <TriangleAlertIcon />
+          <AlertTitle>
+            {run.warnings?.length === 1 ? "Warning" : "Warnings"}
+          </AlertTitle>
+          <AlertDescription>
+            <ul>
+              {run.warnings?.map((warning) => (
+                <li key={warning.message}>{warning.message}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {memoryLoaded.length > 0 && (
+        <details className="rounded-lg border bg-card p-3 text-sm lg:shrink-0">
+          <summary className="cursor-pointer font-medium">
+            Memory loaded
+            <span className="ml-2 font-normal text-muted-foreground">
+              {memoryStores
+                .map((store) => `${store.name} rev ${store.revision}`)
+                .join(" · ")}
+              {memoryMissing > 0 &&
+                `${memoryStores.length ? " · " : ""}${memoryMissing} deleted`}
+            </span>
+          </summary>
+          <div className="mt-2 flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">
+              What the agent read at the end of its instructions, rebuilt from
+              each store's history at the revision the run saw.{" "}
+              {memoryStores.map((store, index) => (
+                <span key={store.storeId}>
+                  {index > 0 && " · "}
+                  <Link
+                    href={`/memory/${store.storeId}?memory=${encodeURIComponent(store.partitionKey)}`}
+                    className="text-foreground hover:underline"
+                  >
+                    Open {store.name}
+                  </Link>
+                </span>
+              ))}
+            </p>
+            {memoryStores.length > 0 && (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-2 text-xs">
+                {renderMemorySection(memoryStores)}
+              </pre>
+            )}
+          </div>
+        </details>
+      )}
+
+      <RunMemoryChanges {...memoryChanges} />
 
       <RunWorkspace
         agentId={run.agentId}

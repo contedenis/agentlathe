@@ -21,7 +21,7 @@ import { compileInputSchema, describeSchemaErrors } from "./input-schema";
 import { loadMcpServers, loadSubAgents, type McpServerGroup } from "./loaders";
 import type { AgentRunStats } from "./recording";
 
-export type ToolKind = "tool" | "mcp" | "sub_agent" | "skill";
+export type ToolKind = "tool" | "mcp" | "sub_agent" | "skill" | "memory";
 
 const MAX_TOOL_RESPONSE_BYTES = 256 * 1024;
 const TRUNCATION_SUFFIX = "[truncated]";
@@ -366,6 +366,8 @@ export async function buildSubAgentTools(
           callStack: new Set(ctx.callStack).add(childId),
           depth: ctx.depth + 1,
           subAgentBudget: ctx.subAgentBudget,
+          run: ctx.run,
+          memoryDrafts: ctx.memoryDrafts,
         };
         const { agent, cleanup, stats } = await buildSubAgentRuntime(
           childId,

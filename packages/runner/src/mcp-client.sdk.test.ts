@@ -11,6 +11,10 @@ import {
 } from "vitest";
 
 vi.mock("./runtime", () => ({ buildSubAgentRuntime: vi.fn() }));
+vi.mock("./memory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./memory")>()),
+  loadMemory: vi.fn(async () => ({ stores: [], seen: [], warnings: [] })),
+}));
 vi.mock("./loaders", () => ({
   loadMcpServers: vi.fn(),
   loadSubAgents: vi.fn(),

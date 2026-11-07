@@ -1,6 +1,13 @@
 import { eq, inArray, or } from "drizzle-orm";
 import { isMain } from "./cli-entry";
 import { db } from "./client";
+import {
+  DEFAULT_MEMORY_PURPOSES,
+  type MemoryScope,
+  memoryPartitionKey,
+  type ScheduleFrequency,
+} from "./constants";
+import { applyMemoryOps } from "./memory";
 import { agentAskToolName, agentSlug } from "./naming";
 import {
   agentCriteria,
@@ -10,6 +17,8 @@ import {
   agents,
   agentTools,
   mcpServers,
+  memoryStores,
+  schedules,
   skills,
   tools,
 } from "./schema";
@@ -258,6 +267,182 @@ const CRITERIA = [
   },
 ];
 
+const MEMORY_NAME: Record<MemoryScope, string> = {
+  agent: "Agent memory",
+  agent_subject: "Agent memory per subject",
+  custom: "Agent memory with a custom key",
+};
+
+const MEMORIES: Array<{
+  agent: string;
+  scope: MemoryScope;
+  purpose?: string;
+  memoryKey?: string;
+  requireApproval?: boolean;
+  entries: Record<string, string[]>;
+}> = [
+  {
+    agent: "Support coordinator",
+    scope: "agent_subject",
+    entries: {
+      "customer-123": [
+        "Prefers answers in Spanish.",
+        "Reported a double charge on 2026-10-14 (ticket 4512); was promised a follow-up by 2026-10-20.",
+      ],
+      "customer-456": [
+        "On the Enterprise plan, with a dedicated account manager.",
+      ],
+    },
+  },
+  {
+    agent: "Repository analyst",
+    scope: "agent",
+    requireApproval: true,
+    entries: {},
+  },
+  {
+    agent: "Data assistant",
+    scope: "custom",
+    memoryKey: "payments",
+    purpose:
+      "Conventions for answering about payments: how amounts are reported, which rates apply, who owns which numbers. Nothing about individual customers.",
+    entries: {
+      payments: [
+        "Quarterly figures are reported in USD.",
+        "Currency conversions use the rate published at 00:00 UTC on the day of the transaction.",
+      ],
+    },
+  },
+];
+
+const SCHEDULES: Array<{
+  agent: string;
+  name: string;
+  frequency: ScheduleFrequency;
+  timeOfDay: string;
+  weekday?: number;
+  input: string;
+  subjectId?: string;
+  memoryKey?: string;
+}> = [
+  {
+    agent: "Data assistant",
+    name: "Weekly metrics digest",
+    frequency: "weekly",
+    weekday: 1,
+    timeOfDay: "09:00",
+    input:
+      "Today is {{date}}. Summarize the key business metrics of the last 7 days and what changed since the last digest ({{last_success_at}}).",
+    memoryKey: "payments",
+  },
+  {
+    agent: "Support coordinator",
+    name: "Follow-up with customer-123",
+    frequency: "weekdays",
+    timeOfDay: "10:00",
+    input:
+      "Today is {{date}}. Check what is pending with this customer and say what the next step is.",
+    subjectId: "customer-123",
+  },
+];
+
+async function seedDemoExamples() {
+  const names = [
+    ...new Set([
+      ...MEMORIES.map((memory) => memory.agent),
+      ...SCHEDULES.map((schedule) => schedule.agent),
+    ]),
+  ];
+  const rows = await db
+    .select({ id: agents.id, name: agents.name, model: agents.model })
+    .from(agents)
+    .where(inArray(agents.name, names));
+  const agentOf = new Map(rows.map((row) => [row.name, row]));
+  if (agentOf.size < names.length) {
+    console.log(
+      "seed-demo: some demo agents are missing; skipped the memory and schedule examples.",
+    );
+    return;
+  }
+  const [seeded] = await db
+    .select({ id: memoryStores.id })
+    .from(memoryStores)
+    .where(
+      inArray(
+        memoryStores.ownerAgentId,
+        rows.map((row) => row.id),
+      ),
+    )
+    .limit(1);
+  if (seeded) {
+    console.log("seed-demo: the demo agents already have memory.");
+    return;
+  }
+
+  const created = await db.transaction(async (tx) => {
+    const stores = await tx
+      .insert(memoryStores)
+      .values(
+        MEMORIES.map((memory) => {
+          const agent = agentOf.get(memory.agent);
+          return {
+            name: MEMORY_NAME[memory.scope],
+            scope: memory.scope,
+            ownerAgentId: agent?.id as string,
+            memoryKey: memory.memoryKey ?? null,
+            purpose:
+              memory.purpose ??
+              DEFAULT_MEMORY_PURPOSES[memory.scope as "agent"],
+            requireApproval: memory.requireApproval ?? false,
+          };
+        }),
+      )
+      .returning();
+    await tx.insert(schedules).values(
+      SCHEDULES.map(
+        ({ agent, weekday, subjectId, memoryKey, ...schedule }) => ({
+          ...schedule,
+          agentId: agentOf.get(agent)?.id as string,
+          weekday: weekday ?? null,
+          subjectId: subjectId ?? null,
+          memoryKey: memoryKey ?? null,
+          timezone: "UTC",
+          isActive: false,
+        }),
+      ),
+    );
+    return stores;
+  });
+
+  let entries = 0;
+  for (const store of created) {
+    const memory = MEMORIES.find(
+      (candidate) =>
+        candidate.scope === store.scope &&
+        agentOf.get(candidate.agent)?.id === store.ownerAgentId,
+    );
+    for (const [key, contents] of Object.entries(memory?.entries ?? {})) {
+      const partitionKey = memoryPartitionKey(store.scope as MemoryScope, {
+        agentId: store.ownerAgentId,
+        subjectId: key,
+        memoryKey: key,
+      });
+      if (!partitionKey) continue;
+      entries += contents.length;
+      await applyMemoryOps(
+        store.id,
+        partitionKey,
+        contents.map((content) => ({ op: "add" as const, content })),
+        { author: "human" },
+      );
+    }
+  }
+
+  console.log(
+    `seed-demo: ${created.length} memories with ${entries} entries, and ${SCHEDULES.length} schedules, paused: activate them in Schedules (each run calls the model).`,
+  );
+}
+
 export async function seedDemo() {
   const [existing] = await db
     .select({ id: agents.id })
@@ -265,7 +450,10 @@ export async function seedDemo() {
     .where(eq(agents.name, MARKER))
     .limit(1);
   if (existing) {
-    console.log(`seed-demo: "${MARKER}" already exists, nothing to do.`);
+    console.log(
+      `seed-demo: "${MARKER}" already exists; adding only what is missing.`,
+    );
+    await seedDemoExamples();
     return;
   }
 
@@ -381,6 +569,7 @@ export async function seedDemo() {
         "seed-demo: no 'GitHub' MCP server found; Repository analyst is left without MCP tools.",
       );
   });
+  await seedDemoExamples();
 }
 
 if (isMain(import.meta.url)) {

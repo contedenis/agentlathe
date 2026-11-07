@@ -6,9 +6,11 @@ import {
   type AgentRow,
   loadAgentConfig,
   loadMcpServers,
+  loadMemoryStores,
   loadSkills,
   loadSubAgents,
   type McpServerGroup,
+  type MemoryStoreRow,
   type SkillRow,
   type SubAgentRow,
 } from "./loaders";
@@ -20,6 +22,7 @@ export type AgentConfig = {
   httpTools: HttpToolRow[];
   mcpServers: McpServerGroup[];
   subAgents: SubAgentRow[];
+  memoryStores?: MemoryStoreRow[];
 };
 
 export type AgentConfigSnapshot = ReturnType<typeof agentConfigSnapshot>;
@@ -109,6 +112,20 @@ export function agentConfigSnapshot(config: AgentConfig) {
         description: child.description ?? child.name,
       })),
     ),
+    ...(config.memoryStores?.length
+      ? {
+          memoryStores: sortCanonical(
+            config.memoryStores.map((store) => ({
+              name: store.name,
+              scope: store.scope,
+              purpose: store.purpose,
+              charLimit: store.charLimit,
+              requireApproval: store.requireApproval,
+              ...(store.expectedKey ? { memoryKey: store.expectedKey } : {}),
+            })),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -157,14 +174,16 @@ export async function computeAgentVersion(
 }
 
 async function loadConfig(agentId: string): Promise<AgentConfig> {
-  const [agent, skills, httpTools, mcpServers, subAgents] = await Promise.all([
-    loadAgentConfig(agentId),
-    loadSkills(agentId),
-    loadHttpToolRows(agentId),
-    loadMcpServers(agentId),
-    loadSubAgents(agentId),
-  ]);
-  return { agent, skills, httpTools, mcpServers, subAgents };
+  const [agent, skills, httpTools, mcpServers, subAgents, memoryStores] =
+    await Promise.all([
+      loadAgentConfig(agentId),
+      loadSkills(agentId),
+      loadHttpToolRows(agentId),
+      loadMcpServers(agentId),
+      loadSubAgents(agentId),
+      loadMemoryStores(agentId),
+    ]);
+  return { agent, skills, httpTools, mcpServers, subAgents, memoryStores };
 }
 
 export async function resolveAgentVersion(agentId: string): Promise<string> {

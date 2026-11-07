@@ -120,6 +120,8 @@ The trigger is a preset, not a cron expression:
 
 Times are 24-hour and belong to a time zone: the form uses your browser's and shows it, and the schedule keeps it. Across a daylight-saving change a time that does not exist that day moves forward by the gap, and a time that repeats runs once, at the first of the two. "Every hour" runs every real hour and never less than an hour apart, including the hour that repeats when clocks go back. The form previews the next five runs.
 
+A schedule can also act for a **Subject** and send a **Memory key** (`subjectId` / `memoryKey` over the API, up to 200 characters each): its runs get them as if a caller had sent `x-subject-id` / `x-memory-key`, so they read and write that [memory](#memory).
+
 The message can carry variables, filled in for each run: `{{date}}` and `{{datetime}}` (when the run was due, in the schedule's time zone), `{{nominal_at}}` (the same time in UTC), `{{last_success_at}}` (when the last successful run was due, or `never`) and `{{schedule}}` (its name).
 
 **Every time a schedule comes due it leaves an occurrence**, listed on the schedule's page with its result, the reason and a link to the run:
@@ -151,20 +153,72 @@ curl -X POST http://localhost:3000/api/schedules \
     "input": "Summarize what changed since {{last_success_at}}."
   }'
 
-# weekday is 0 (Sunday) to 6 and only for weekly; startDate (YYYY-MM-DD) only for monthly
+# weekday is 0 (Sunday) to 6 and only for weekly; startDate (YYYY-MM-DD) only for monthly;
+# subjectId and memoryKey are optional
 curl -X POST http://localhost:3000/api/schedules/<schedule-uuid>/run
 curl http://localhost:3000/api/schedules/<schedule-uuid>/occurrences
+```
+
+## Run subjects
+
+A run can say who it acted for: a customer, a ticket, a repository, whatever your callers are about. Send `x-subject-id` on `/v1` or MCP, fill **Act as subject** (and **Memory key**, the Playground's `x-memory-key`) in the Playground, or give a schedule a **Subject**. The run page shows it, and **Runs** filters by it. It is a label of up to 200 characters that the caller picks, not an identity anyone checked: see [SECURITY.md](../SECURITY.md).
+
+## Memory
+
+Memory is what an agent keeps between runs. Each agent has at most one, chosen under **Memory** in its form:
+
+| Memory | One memory for | Loaded when |
+|---|---|---|
+| **Agent memory** | All the agent's runs | Always |
+| **Agent memory per subject** | Each `x-subject-id` | The run has a subject |
+| **Agent memory with a custom key** | The value you set in the agent | The request sends `x-memory-key` with exactly that value |
+
+A memory is a list of short entries (500 characters each) under a character limit (8,000 by default, 20,000 at most), with a **purpose** that tells the agent what belongs in it. At the start of every run the entries are added to the end of the agent's instructions, framed as data saved in earlier runs and not as instructions, each with an id like `s3` and the date it was written. The agent page warns when the limit would take more than a quarter of the model's context.
+
+The agent changes its memory with three tools: `memory_add`, `memory_update` and `memory_delete`. Their changes are saved when the run ends and seen from the next run, never by the run that made them, and each change records the run that made it. Changes that would overflow the limit, touch a pinned entry or look like a credential are refused back to the model. Turn on **Require approval** and the changes wait on the memory's page for you to approve or reject them; one whose entry changed in the meantime is rejected. If a tool of the agent's own already has one of those names, it is renamed, keeping its approval gate.
+
+A run that lacks what its memory needs (a subject for a per-subject memory, the right `x-memory-key` for a custom one) runs without memory and says so on the run page, and the agent page counts those runs over the last week. Both need the run recorded: `/v1` and MCP runs are not recorded by default (see [Metrics](#metrics)), and without a run row there is no warning, and the memory's changes are saved without the run that made them. Sub-agents load their own memory with the same subject and key as the run that called them.
+
+**Compaction.** When a memory passes 90% of its limit after a run, the agent's model consolidates it down to 60%: it keeps, merges or deletes entries, giving a reason for each deletion, and keeps pinned ones as they are. The result is checked before it is applied (every entry accounted for once, pinned ones included in the 60%) and retried once with what was wrong; if it still fails, nothing changes and the failure is listed. A merged or dropped entry keeps its history and can be restored like any deleted one. If the pinned entries alone take more than 60%, the memory is not compacted and its page says so.
+
+**The Memory section** lists every agent's memory. Its page shows the memory, one per subject for a per-subject memory, and lets you add, edit, pin, delete and restore entries, with the history of each: nothing is overwritten, every change to an entry's text is a new version, and a deleted entry keeps its history and can be restored. The run page shows the memory a run loaded, rebuilt at the revision it saw, and what the run changed.
+
+```bash
+curl -X POST http://localhost:3000/api/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Support coordinator",
+    "model": "~deepseek/deepseek-v4-flash-latest",
+    "memory": {
+      "type": "agent_subject",
+      "settings": {
+        "purpose": "What each customer told you about their account and preferences.",
+        "charLimit": 8000,
+        "requireApproval": false
+      }
+    }
+  }'
+```
+
+`type` is `none`, `agent`, `agent_subject` or `custom`; `custom` also takes `memoryKey`. Over the API every `settings` field is required, and `charLimit` runs from 1,000 to 20,000. Switching type keeps the old memory's entries, off, until you switch back. Changing a custom key starts an empty memory for the new key; the old key's entries stay on the memory's page, and come back if you set the old key again. The other `/api/memory-stores` routes are the dashboard's own and may change between versions.
+
+**Forgetting a subject.** **Forget subject**, on a per-subject memory or on **Runs** filtered by a subject, deletes that subject's memory in every agent, with its history; the transcripts and fix drafts of its runs; and the schedules that act for it. The runs stay, without the subject, so metrics do not change. What its runs wrote into an agent memory or a custom-key one stays there: delete it by hand. A run for that subject still in progress when you forget it can save to its memory when it ends, and is recorded with the subject: forget again once its traffic has stopped.
+
+```bash
+curl -X POST http://localhost:3000/api/subjects/forget \
+  -H "Content-Type: application/json" \
+  -d '{ "subjectId": "customer-123" }'
 ```
 
 ## Metrics
 
 Three tables, deliberately separated:
 
-- **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp` / `schedule`), status, `thread_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
-- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
+- **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp` / `schedule`), status, `thread_id`, `subject_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
+- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`, `memory`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
 - **`run_transcripts`** — the actual input and output messages, keyed 1:1 on the run.
 
-Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections and sub-agents. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
+Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents, memory settings) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents and memory. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
 
 Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
 
@@ -174,11 +228,11 @@ curl -X PATCH http://localhost:3000/api/settings \
   -d '{ "trackV1Runs": true, "agentRunTtlDays": 30, "transcriptTtlDays": 7 }'
 ```
 
-Retention is TTL-based and swept lazily, when a page that shows runs loads and about every ten minutes while a [scheduler](#schedules) runs: runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs, criteria and versions; deleting a run deletes its transcript, notes and verdicts. Agent versions have no TTL.
+Retention is TTL-based and swept lazily, when a page that shows runs loads and about every ten minutes while a [scheduler](#schedules) runs: runs default to **90 days**, transcripts to **14**. Both `agentRunTtlDays` and `transcriptTtlDays` are configurable through that same `PATCH`. Deleting an agent deletes its runs, criteria, versions, schedules and memory; deleting a run deletes its transcript, notes and verdicts. Agent versions have no TTL.
 
 **Evaluation.** When an agent has [criteria](#criteria), its metrics page (`/metrics/[id]`) has an Evaluation section for the selected range, and `/metrics` shows the overall pass rate, the runs awaiting review (all of them, not only those in the range, linking to the same queue in the runs list) and a pass-rate column per agent. Everything follows the criteria counting rules: your review overrides the judge, unreviewed needs-review, not-applicable, skipped and errored verdicts stay out of the rate, and only verdicts given to the criterion's current question count.
 
-- **Evaluation by agent version** — one row per active criterion, one column per agent version that was judged in the range, ordered by when each version last ran in the range (the newest is highlighted; a version is labelled by the first 8 characters of its hash, the date it first appeared and its last run). A version that ran in several periods, for example after you reverted a change, is one column, and the newest is whichever ran most recently. Each cell shows the pass rate, `n` (the verdicts it is based on) and how many are still to review; a dash means no data. To answer "did my last change help?", read the newest column against the one before it: next to the newest cell, the change in points appears only when both versions have at least 5 judged verdicts. With fewer it says "too few verdicts to compare" instead, because a swing of a few runs is noise. Under every version but the first, a one-line summary says what changed against the column to its left (the same pair the change in points compares), and **What changed** opens the diff: model, step limit, a line diff of the prompt, and the skills, tools, MCP servers and sub-agents that were added, removed or edited. Entities are matched by name, so a rename reads as one removed and one added. A change inside a sub-agent is named but not detailed; that sub-agent's own metrics page shows it. Inactive criteria are left out.
+- **Evaluation by agent version** — one row per active criterion, one column per agent version that was judged in the range, ordered by when each version last ran in the range (the newest is highlighted; a version is labelled by the first 8 characters of its hash, the date it first appeared and its last run). A version that ran in several periods, for example after you reverted a change, is one column, and the newest is whichever ran most recently. Each cell shows the pass rate, `n` (the verdicts it is based on) and how many are still to review; a dash means no data. To answer "did my last change help?", read the newest column against the one before it: next to the newest cell, the change in points appears only when both versions have at least 5 judged verdicts. With fewer it says "too few verdicts to compare" instead, because a swing of a few runs is noise. Under every version but the first, a one-line summary says what changed against the column to its left (the same pair the change in points compares), and **What changed** opens the diff: model, step limit, a line diff of the prompt, and the skills, tools, MCP servers, sub-agents and memory that were added, removed or edited. Entities are matched by name, so a rename reads as one removed and one added. A change inside a sub-agent is named but not detailed; that sub-agent's own metrics page shows it. Inactive criteria are left out.
 - **Pass rate over time** — the daily pass rate of each criterion, on days that have judged verdicts. Dashed vertical lines mark the day a new agent version first ran.
 - **Judge vs human** — among verdicts you reviewed that the judge had called pass or fail, the share where you kept its verdict (it needs at least 5 reviews to show a percentage), and how you resolved the ones the judge left as needs review.
 
@@ -312,7 +366,7 @@ const res = await client.chat.completions.create({
 });
 ```
 
-The API is **stateless**: the caller owns the full `messages` history on every request. The optional `x-thread-id` header groups the runs of one conversation in the dashboard; without it each call stands alone.
+The API is **stateless**: the caller owns the full `messages` history on every request. The optional `x-thread-id` header groups the runs of one conversation in the dashboard; without it each call stands alone. `x-subject-id` names who the run acted for, and `x-memory-key` picks a memory with a custom key (see [Memory](#memory)); each takes up to 200 characters, and a longer one is refused with a 400.
 
 Tools flagged `needsApproval` are **automatically denied** on `/v1` — it is headless, there is nobody there to approve. The model gets back `tool '<name>' requires approval; not available over the API` and can carry on without it.
 
@@ -326,7 +380,7 @@ POST http://localhost:3000/mcp/agents/{agent-id-or-uuid}
 
 The path segment accepts the agent's **ID (slug), its URL-encoded name, or its UUID** — same resolver as the `/v1` `model` field.
 
-It speaks streamable HTTP (protocol `2025-11-25`, `2025-06-18` accepted) and exposes exactly **one tool**, `ask_{id}` — the agent with ID `response-writer` becomes `ask_response-writer` — taking a single `message` string and returning the agent's answer. Progress notifications are sent per step when the client supplies a `progressToken`.
+It speaks streamable HTTP (protocol `2025-11-25`, `2025-06-18` accepted) and exposes exactly **one tool**, `ask_{id}` — the agent with ID `response-writer` becomes `ask_response-writer` — taking a single `message` string and returning the agent's answer. Progress notifications are sent per step when the client supplies a `progressToken`. `x-subject-id` and `x-memory-key` are read from the HTTP request headers, as on `/v1`; one over 200 characters is refused with an invalid-params error.
 
 ```json
 {
@@ -355,8 +409,10 @@ So the default is: your own experiments are recorded, third-party traffic is not
 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key, a customer's email or a medical record in a message, that is what lands in your database, in plaintext, on any agent you switched recording on for. agentlathe does not detect, mask or hash anything. Turning on recording for an agent that serves real users is a decision about their data, not just yours — make it deliberately, and tell them if that is what your jurisdiction expects.
 
-Retention is TTL-based and swept lazily (on page loads, and every ten minutes or so while a scheduler runs): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs, and deleting a run deletes its transcript, notes and verdicts. A verdict outlives the transcript it was judged on, which is why a run older than the transcript TTL can no longer be re-evaluated.
+Retention is TTL-based and swept lazily (on page loads, and every ten minutes or so while a scheduler runs): runs default to 90 days, transcripts to 14 — transcripts are the heavy, sensitive half, so they expire first. Both are configurable. Deleting an agent deletes its runs and its memory, and deleting a run deletes its transcript, notes and verdicts. A verdict outlives the transcript it was judged on, which is why a run older than the transcript TTL can no longer be re-evaluated.
 
 **Evaluated transcripts leave the instance.** When an agent has active criteria, each run that is evaluated (or previewed against a draft criterion) is sent to the judge as text: TypeSafe's Jev, through OpenRouter by default or the host `JUDGE_URL` names. Agents without criteria send nothing, and switching off "Evaluate new runs automatically" limits it to the runs you evaluate by hand.
+
+**Memory has no TTL.** Entries and every past version stay until you delete the memory or its agent: deleting an entry hides it but keeps its history, which can be restored. Forgetting a subject removes that subject's memory and transcripts. Like transcripts, memory is not redacted: the agent's tools refuse an entry that looks like a credential, and nothing else is checked.
 
 The reasoning behind these defaults, and the tradeoffs they accept, are in [SECURITY.md](../SECURITY.md).

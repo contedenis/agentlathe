@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AgentForm } from "@/components/forms/agent-form";
 import { PageHeader } from "@/components/page-header";
+import { memoryConfigOf } from "@/lib/memory-settings";
 import { getOpenRouterModels } from "@/lib/openrouter-models";
 import { getAgentDetail, getAgentFormCatalogs } from "@/lib/queries";
 
@@ -41,6 +42,7 @@ export default async function EditAgentPage({
           skillIds: agent.skills.map((s) => s.id),
           toolIds: agent.tools.map((t) => t.id),
           subAgentIds: agent.subAgents.map((a) => a.id),
+          memory: memoryConfigOf(agent.memoryStores),
           mcpTools: agent.mcpTools.flatMap((group) =>
             group.tools.map((tool) => ({
               serverId: group.serverId,

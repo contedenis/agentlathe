@@ -326,6 +326,42 @@ describe("agentConfigSnapshot / hashSnapshot", () => {
       expect(serialized).not.toContain(secret);
   });
 
+  it("adds memory stores only to agents that have them, so other agents keep their hash", () => {
+    const without = agentConfigSnapshot(baseConfig());
+    const empty = agentConfigSnapshot({ ...baseConfig(), memoryStores: [] });
+    const store = {
+      id: "m",
+      name: "Lessons",
+      agentName: "Support",
+      scope: "agent" as const,
+      purpose: "What you learned.",
+      charLimit: 8000,
+      requireApproval: false,
+      expectedKey: null,
+    };
+    const withStore = agentConfigSnapshot({
+      ...baseConfig(),
+      memoryStores: [store],
+    });
+    const editedPurpose = agentConfigSnapshot({
+      ...baseConfig(),
+      memoryStores: [{ ...store, purpose: "Something else." }],
+    });
+
+    expect(without).not.toHaveProperty("memoryStores");
+    expect(hashSnapshot(empty)).toBe(hashSnapshot(without));
+    expect(withStore.memoryStores).toEqual([
+      {
+        name: "Lessons",
+        scope: "agent",
+        purpose: "What you learned.",
+        charLimit: 8000,
+        requireApproval: false,
+      },
+    ]);
+    expect(hashSnapshot(editedPurpose)).not.toBe(hashSnapshot(withStore));
+  });
+
   it("treats a null system prompt like an empty one, as the runtime does", () => {
     const empty = baseConfig();
     empty.agent.systemPrompt = "";

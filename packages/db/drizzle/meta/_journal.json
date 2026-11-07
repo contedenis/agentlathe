@@ -29,6 +29,13 @@
       "when": 1792325765210,
       "tag": "0003_schedules",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794057259013,
+      "tag": "0004_memory",
+      "breakpoints": true
     }
   ]
 }

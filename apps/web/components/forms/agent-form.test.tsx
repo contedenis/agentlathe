@@ -1,3 +1,4 @@
+import { DEFAULT_MEMORY_PURPOSES } from "@agentlathe/db/constants";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +35,7 @@ vi.mock("@/components/forms/model-combobox", () => ({
   }) => (
     <input
       id={id}
-      aria-label="Model"
+      aria-label={id === "model" ? "Model" : id}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     />
@@ -150,6 +151,74 @@ describe("AgentForm", () => {
       (vi.mocked(apiRequest).mock.calls[0][1] as RequestInit).body as string,
     );
     expect(body).toMatchObject({ recordTraffic: true, autoEvaluate: false });
+  });
+
+  it("gives the agent one memory, with the default settings", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
+    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+
+    await user.type(screen.getByLabelText("Name"), "My Agent");
+    await user.type(screen.getByLabelText("Model"), "openrouter/model");
+    await user.click(screen.getByRole("combobox", { name: "Memory" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Agent memory per subject" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const body = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(body.memory).toEqual({
+      type: "agent_subject",
+      settings: {
+        purpose: DEFAULT_MEMORY_PURPOSES.agent_subject,
+        charLimit: 8000,
+        requireApproval: false,
+      },
+    });
+  });
+
+  it("asks for the x-memory-key value and a purpose for a memory with a custom key", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
+    render(<AgentForm catalogs={emptyCatalogs} models={[]} />);
+
+    await user.type(screen.getByLabelText("Name"), "My Agent");
+    await user.type(screen.getByLabelText("Model"), "openrouter/model");
+    await user.click(screen.getByRole("combobox", { name: "Memory" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Agent memory with a custom key",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText("Set the x-memory-key value the agent expects."),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("x-memory-key"), " example-key ");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByText("A memory needs a purpose."),
+    ).toBeInTheDocument();
+    expect(apiRequest).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Purpose"), "Team decisions.");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const body = JSON.parse(
+      (vi.mocked(apiRequest).mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(body.memory).toEqual({
+      type: "custom",
+      memoryKey: "example-key",
+      settings: {
+        purpose: "Team decisions.",
+        charLimit: 8000,
+        requireApproval: false,
+      },
+    });
   });
 
   it("rejects a slug with characters outside the allowed pattern before submitting", async () => {

@@ -20,6 +20,10 @@ vi.mock("ai", async (importOriginal) => {
     ToolLoopAgent: MockToolLoopAgent,
   };
 });
+vi.mock("./memory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./memory")>()),
+  loadMemory: vi.fn(async () => ({ stores: [], seen: [], warnings: [] })),
+}));
 vi.mock("./loaders", () => ({
   loadAgentConfig: vi.fn(async () => ({
     id: "agent-1",
@@ -41,6 +45,7 @@ import {
 import { buildDashboardToolApproval } from "./approval";
 import { estimateTokens, getContextLimit } from "./helpers";
 import { loadSkills, type SkillRow } from "./loaders";
+import { loadMemory } from "./memory";
 import { type AgentRunStats, emptyRunStats } from "./recording";
 import {
   buildAgentRuntime,
@@ -469,9 +474,35 @@ describe("buildAgentRuntime — recursion guard is seeded internally", () => {
         callStack: new Set(["agent-1"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       expect.any(Function),
       expect.any(Function),
     );
+  });
+
+  it("seeds the run context it is given and loads the agent's memory with it", async () => {
+    vi.mocked(buildTools).mockResolvedValue({
+      tools: {},
+      approvalToolNames: new Set<string>(),
+      toolKinds: new Map(),
+      mcpFailures: [],
+      cleanup: async () => {},
+    });
+    const run = { subjectId: "user-42", memoryKey: null };
+    const seen = { storeId: "store-1", partitionKey: "user-42", revision: 3 };
+    const warning = { code: "memory_missing_key", message: "no key" };
+    vi.mocked(loadMemory).mockResolvedValueOnce({
+      stores: [],
+      seen: [seen],
+      warnings: [warning],
+    });
+
+    const { stats } = await buildAgentRuntime(agentRow, { run });
+
+    expect(vi.mocked(buildTools).mock.calls[0][1].run).toBe(run);
+    expect(loadMemory).toHaveBeenCalledWith("agent-1", run);
+    expect(stats()).toMatchObject({ memorySeen: [seen], warnings: [warning] });
   });
 });

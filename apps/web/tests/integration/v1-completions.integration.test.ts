@@ -180,7 +180,7 @@ describe("POST /v1/chat/completions against a scripted provider (requires Docker
           messages: [{ role: "user", content: "hi" }],
           stream: true,
         },
-        { "x-thread-id": "thread-42" },
+        { "x-thread-id": "thread-42", "x-subject-id": " user-42 " },
       ),
     );
 
@@ -210,6 +210,7 @@ describe("POST /v1/chat/completions against a scripted provider (requires Docker
       expect(run.source).toBe("v1");
       expect(run.status).toBe("ok");
       expect(run.threadId).toBe("thread-42");
+      expect(run.subjectId).toBe("user-42");
       expect(run.model).toBe("test/model");
       expect(run.inputTokens).toBe(12);
       expect(run.outputTokens).toBe(7);
@@ -226,6 +227,26 @@ describe("POST /v1/chat/completions against a scripted provider (requires Docker
       expect(transcript).toBeDefined();
       expect(transcript.input).toEqual([{ role: "user", content: "hi" }]);
     });
+  });
+
+  it("rejects a subject longer than 200 characters before running anything", async () => {
+    const before = await latestRun();
+
+    const res = await route.POST(
+      completionRequest(
+        { model: agent.name, messages: [{ role: "user", content: "hi" }] },
+        { "x-subject-id": "u".repeat(201) },
+      ),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: {
+        message: "x-subject-id must be at most 200 characters.",
+        type: "invalid_request_error",
+      },
+    });
+    expect((await latestRun())?.id).toBe(before?.id);
   });
 
   it("emits usage when stream_options.include_usage is set", async () => {
@@ -324,5 +345,241 @@ describe("POST /v1/chat/completions against a scripted provider (requires Docker
       expect(run.status).toBe("ok");
       expect(run.source).toBe("v1");
     });
+  });
+
+  it("injects the agent's memory for the run's subject, records what it saw, and warns about a store it could not load", async () => {
+    let systemPrompt = "";
+    handleCompletion = (body, res) => {
+      systemPrompt = JSON.parse(body).messages[0].content;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "gen-test",
+          object: "chat.completion",
+          created: 1,
+          model: "test/model",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "Hola." },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+    };
+    const [profiles] = await dbModule.db
+      .insert(dbModule.memoryStores)
+      .values({
+        name: "Profiles",
+        scope: "agent_subject",
+        ownerAgentId: agent.id,
+        purpose: "Who they are.",
+      })
+      .returning();
+    await dbModule.applyMemoryOps(
+      profiles.id,
+      "user-42",
+      [{ op: "add", content: "Prefers Spanish." }],
+      { author: "human" },
+    );
+
+    try {
+      const res = await route.POST(
+        completionRequest(
+          { model: agent.name, messages: [{ role: "user", content: "hi" }] },
+          { "x-subject-id": "user-42" },
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(systemPrompt).toContain(
+        '### Your history with subject "user-42" (16 / 8,000 characters)',
+      );
+      expect(systemPrompt).toMatch(
+        /- \[s1\] Prefers Spanish\. \(\d{4}-\d{2}-\d{2}\)/,
+      );
+      await vi.waitFor(async () => {
+        const run = await latestRun();
+        expect(run.subjectId).toBe("user-42");
+        expect(run.memorySeen).toEqual([
+          { storeId: profiles.id, partitionKey: "user-42", revision: 1 },
+        ]);
+        expect(run.warnings).toBeNull();
+      });
+
+      await route.POST(
+        completionRequest({
+          model: agent.name,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      );
+      expect(systemPrompt).not.toContain("## Memory");
+      await vi.waitFor(async () => {
+        const run = await latestRun();
+        expect(run.memorySeen).toBeNull();
+        expect(run.warnings).toEqual([
+          {
+            code: "memory_missing_subject",
+            message:
+              'Ran without the memory of "v1-stream-agent": no x-subject-id was sent.',
+          },
+        ]);
+      });
+    } finally {
+      await dbModule.db.delete(dbModule.memoryStores);
+    }
+  });
+
+  it("uses the custom key memory only when x-memory-key matches the key the agent expects", async () => {
+    let systemPrompt = "";
+    handleCompletion = (body, res) => {
+      systemPrompt = JSON.parse(body).messages[0].content;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "gen-test",
+          object: "chat.completion",
+          created: 1,
+          model: "test/model",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+    };
+    const [team] = await dbModule.db
+      .insert(dbModule.memoryStores)
+      .values({
+        name: "Team",
+        scope: "custom",
+        ownerAgentId: agent.id,
+        memoryKey: "team-ops",
+        purpose: "Team decisions.",
+      })
+      .returning();
+    const ask = (headers: Record<string, string>) =>
+      route.POST(
+        completionRequest(
+          { model: agent.name, messages: [{ role: "user", content: "hi" }] },
+          headers,
+        ),
+      );
+
+    try {
+      await ask({ "x-memory-key": "team-ops" });
+      expect(systemPrompt).toContain('### Memory for key "team-ops"');
+      await vi.waitFor(async () => {
+        expect((await latestRun()).memorySeen).toEqual([
+          { storeId: team.id, partitionKey: "team-ops", revision: 0 },
+        ]);
+      });
+
+      await ask({ "x-memory-key": "someone-else" });
+      expect(systemPrompt).not.toContain("## Memory");
+      await vi.waitFor(async () => {
+        expect((await latestRun()).warnings).toEqual([
+          {
+            code: "memory_key_mismatch",
+            message:
+              'Ran without the memory of "v1-stream-agent": x-memory-key did not match the key this agent expects.',
+          },
+        ]);
+      });
+    } finally {
+      await dbModule.db.delete(dbModule.memoryStores);
+    }
+  });
+
+  it("saves what the agent writes to memory when the run ends, linked to the run", async () => {
+    const replies = [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call-1",
+            type: "function",
+            function: {
+              name: "memory_add",
+              arguments: JSON.stringify({
+                content: "Prefers email over phone.",
+              }),
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: "Noted." },
+    ];
+    handleCompletion = (_body, res) => {
+      const message = replies.shift();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "gen-test",
+          object: "chat.completion",
+          created: 1,
+          model: "test/model",
+          choices: [
+            {
+              index: 0,
+              message,
+              finish_reason: message?.tool_calls ? "tool_calls" : "stop",
+            },
+          ],
+        }),
+      );
+    };
+    const [profiles] = await dbModule.db
+      .insert(dbModule.memoryStores)
+      .values({
+        name: "Profiles",
+        scope: "agent_subject",
+        ownerAgentId: agent.id,
+        purpose: "Who they are.",
+      })
+      .returning();
+
+    try {
+      const res = await route.POST(
+        completionRequest(
+          {
+            model: agent.name,
+            messages: [{ role: "user", content: "Email me, please." }],
+          },
+          { "x-subject-id": "user-7" },
+        ),
+      );
+      expect((await res.json()).choices[0].message.content).toBe("Noted.");
+
+      const run = await latestRun();
+      const { entries, revision } = await dbModule.readPartition(
+        profiles.id,
+        "user-7",
+      );
+      expect(revision).toBe(1);
+      expect(entries).toMatchObject([
+        { shortId: "s1", content: "Prefers email over phone." },
+      ]);
+      const { getRunMemoryChanges } = await import("../../lib/queries-memory");
+      expect(await getRunMemoryChanges(run.id)).toMatchObject({
+        changes: [
+          {
+            op: "add",
+            shortId: "s1",
+            content: "Prefers email over phone.",
+            before: null,
+            storeName: "Profiles",
+          },
+        ],
+        proposals: [],
+      });
+    } finally {
+      await dbModule.db.delete(dbModule.memoryStores);
+    }
   });
 });

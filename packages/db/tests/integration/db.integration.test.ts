@@ -3,7 +3,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -502,6 +502,163 @@ describe("db integration (requires Docker)", () => {
     });
   });
 
+  describe("memory stores", () => {
+    async function makeEntry(name: string) {
+      const [agent] = await db
+        .insert(schema.agents)
+        .values({ name, slug: agentSlug(name), model: "test/model" })
+        .returning();
+      const [store] = await db
+        .insert(schema.memoryStores)
+        .values({
+          name,
+          scope: "agent",
+          ownerAgentId: agent.id,
+          purpose: "Facts about the job.",
+        })
+        .returning();
+      await db
+        .insert(schema.memoryPartitions)
+        .values({ storeId: store.id, partitionKey: agent.id, revision: 1 });
+      const [entry] = await db
+        .insert(schema.memoryEntries)
+        .values({ storeId: store.id, partitionKey: agent.id, shortId: "a1" })
+        .returning();
+      const [run] = await db
+        .insert(schema.agentRuns)
+        .values({ agentId: agent.id, source: "v1", durationMs: 5 })
+        .returning();
+      await db.insert(schema.memoryEntryVersions).values({
+        entryId: entry.id,
+        revision: 1,
+        op: "add",
+        content: "The report goes out on Mondays.",
+        runId: run.id,
+        author: "agent",
+      });
+      return { agent, store, entry, run };
+    }
+
+    it("deleting an agent deletes its memory and everything in it", async () => {
+      const { agent, store, entry } = await makeEntry("Memory owner agent");
+
+      await db.delete(schema.agents).where(eq(schema.agents.id, agent.id));
+
+      expect(
+        await db
+          .select()
+          .from(schema.memoryStores)
+          .where(eq(schema.memoryStores.id, store.id)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(schema.memoryEntries)
+          .where(eq(schema.memoryEntries.id, entry.id)),
+      ).toHaveLength(0);
+    });
+
+    it("deleting a run keeps the memory it wrote, without the link", async () => {
+      const { entry, run } = await makeEntry("Memory run agent");
+
+      await db.delete(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+
+      const [version] = await db
+        .select()
+        .from(schema.memoryEntryVersions)
+        .where(eq(schema.memoryEntryVersions.entryId, entry.id));
+      expect(version.content).toBe("The report goes out on Mondays.");
+      expect(version.runId).toBeNull();
+    });
+
+    it("deleting a store removes its partitions, entries, history, proposals and compactions", async () => {
+      const { store, entry, agent } = await makeEntry("Memory cascade agent");
+      await db.insert(schema.memoryProposals).values({
+        storeId: store.id,
+        partitionKey: agent.id,
+        op: "delete",
+        entryId: entry.id,
+        baseRevision: 1,
+      });
+      await db.insert(schema.memoryCompactions).values({
+        storeId: store.id,
+        partitionKey: agent.id,
+        fromRevision: 1,
+        model: "test/model",
+        status: "running",
+      });
+
+      await db
+        .delete(schema.memoryStores)
+        .where(eq(schema.memoryStores.id, store.id));
+
+      for (const [table, column] of [
+        [schema.memoryPartitions, schema.memoryPartitions.storeId],
+        [schema.memoryEntries, schema.memoryEntries.storeId],
+        [schema.memoryProposals, schema.memoryProposals.storeId],
+        [schema.memoryCompactions, schema.memoryCompactions.storeId],
+      ] as const)
+        expect(
+          await db.select().from(table).where(eq(column, store.id)),
+        ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(schema.memoryEntryVersions)
+          .where(eq(schema.memoryEntryVersions.entryId, entry.id)),
+      ).toHaveLength(0);
+    });
+
+    it("rejects what the memory model cannot hold", async () => {
+      const { store, entry, agent } = await makeEntry(
+        "Memory constraint agent",
+      );
+      const base = {
+        name: "x",
+        scope: "custom",
+        memoryKey: "team",
+        ownerAgentId: agent.id,
+        purpose: "x",
+      };
+
+      for (const values of [
+        { ...base, scope: "global" },
+        { ...base, scope: "subject" },
+        { ...base, charLimit: 20001 },
+        { ...base, charLimit: 0 },
+        { ...base, memoryKey: null },
+        { ...base, scope: "agent_subject" },
+      ])
+        await expect(
+          db.insert(schema.memoryStores).values(values),
+        ).rejects.toMatchObject({ cause: { code: "23514" } });
+      for (const values of [
+        { op: "merge", author: "agent" },
+        { op: "add", author: "system" },
+      ])
+        await expect(
+          db
+            .insert(schema.memoryEntryVersions)
+            .values({ entryId: entry.id, revision: 2, ...values }),
+        ).rejects.toMatchObject({ cause: { code: "23514" } });
+      await expect(
+        db
+          .insert(schema.memoryEntries)
+          .values({ storeId: store.id, partitionKey: agent.id, shortId: "a1" }),
+      ).rejects.toMatchObject({ cause: { code: "23505" } });
+      await expect(
+        db
+          .insert(schema.memoryStores)
+          .values({ ...base, scope: "agent", memoryKey: null }),
+      ).rejects.toMatchObject({ cause: { code: "23505" } });
+      await expect(
+        db
+          .insert(schema.memoryEntries)
+          .values({ storeId: store.id, partitionKey: "nobody", shortId: "a1" }),
+      ).rejects.toMatchObject({ cause: { code: "23503" } });
+    });
+  });
+
   describe("seed", () => {
     it("inserts the example agent linked to its skill and tool without violating constraints, and re-running it does not duplicate anything", async () => {
       const { seed } = await import("../../src/seed");
@@ -579,6 +736,76 @@ describe("db integration (requires Docker)", () => {
         criteria.every((row) => row.passDescription && row.failDescription),
       ).toBe(true);
       expect(criteria.filter((row) => row.appliesWhen)).toHaveLength(1);
+    });
+
+    it("adds example memories and paused schedules, once, to a demo that predates them", async () => {
+      const { seedDemo } = await import("../../src/seed-demo");
+      await seedDemo();
+
+      const demoStores = async () =>
+        (
+          await db
+            .select({
+              id: schema.memoryStores.id,
+              name: schema.memoryStores.name,
+              owner: schema.agents.name,
+            })
+            .from(schema.memoryStores)
+            .leftJoin(
+              schema.agents,
+              eq(schema.agents.id, schema.memoryStores.ownerAgentId),
+            )
+        ).filter((row) =>
+          [
+            "Support coordinator",
+            "Repository analyst",
+            "Data assistant",
+          ].includes(row.owner ?? ""),
+        );
+      const stores = await demoStores();
+      expect(
+        stores.map((row) => `${row.owner ?? "shared"}: ${row.name}`).sort(),
+      ).toEqual([
+        "Data assistant: Agent memory with a custom key",
+        "Repository analyst: Agent memory",
+        "Support coordinator: Agent memory per subject",
+      ]);
+      const partitions = await db
+        .select({
+          key: schema.memoryPartitions.partitionKey,
+          chars: schema.memoryPartitions.chars,
+        })
+        .from(schema.memoryPartitions)
+        .where(
+          inArray(
+            schema.memoryPartitions.storeId,
+            stores.map((row) => row.id),
+          ),
+        );
+      expect(partitions.map((row) => row.key).sort()).toEqual(
+        expect.arrayContaining(["customer-123", "customer-456", "payments"]),
+      );
+      expect(partitions).toHaveLength(3);
+
+      const seeded = await db.select().from(schema.schedules);
+      expect(
+        seeded.map((row) => [row.name, row.isActive, row.nextRunAt]),
+      ).toEqual(
+        expect.arrayContaining([
+          ["Weekly metrics digest", false, null],
+          ["Follow-up with customer-123", false, null],
+        ]),
+      );
+      expect(
+        seeded.find((row) => row.name === "Follow-up with customer-123")
+          ?.subjectId,
+      ).toBe("customer-123");
+
+      await seedDemo();
+      expect(await demoStores()).toHaveLength(3);
+      expect(await db.select().from(schema.schedules)).toHaveLength(
+        seeded.length,
+      );
     });
   });
 });

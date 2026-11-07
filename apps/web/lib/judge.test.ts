@@ -150,7 +150,7 @@ describe("askJudge — classifying what the Decisions API answers", () => {
       error: { message: "Model typesafe/jev-9.99 does not exist", code: 400 },
     });
     await expect(ask()).rejects.toThrow(
-      "Model typesafe/jev-9.99 does not exist; check the judge model in Settings",
+      'Model typesafe/jev-9.99 does not exist; check the judge model under "What to record" in /metrics',
     );
   });
 

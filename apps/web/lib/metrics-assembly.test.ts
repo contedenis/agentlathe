@@ -162,6 +162,14 @@ describe("assembleCapabilities — configured vs actually used", () => {
     });
   });
 
+  it("counts the memory tools as plugged in: they come with the memory, not the configuration", () => {
+    const [row] = assembleCapabilities(
+      [],
+      [{ ...stats("memory_add", 2), kind: "memory" }],
+    );
+    expect(row).toMatchObject({ kind: "memory", configured: true, calls: 2 });
+  });
+
   it("sorts by activity (calls + denied) with display-name ties", () => {
     const result = assembleCapabilities(
       [

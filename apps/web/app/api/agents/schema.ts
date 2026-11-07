@@ -1,6 +1,12 @@
-import { AGENT_SLUG_MAX_LENGTH, AGENT_SLUG_PATTERN } from "@agentlathe/db";
+import {
+  AGENT_SLUG_MAX_LENGTH,
+  AGENT_SLUG_PATTERN,
+  MAX_MEMORY_CHAR_LIMIT,
+  RUN_LABEL_MAX_LENGTH,
+} from "@agentlathe/db";
 import { z } from "zod";
 import { isUuid } from "@/lib/api-helpers";
+import { MIN_MEMORY_CHAR_LIMIT } from "@/lib/memory-settings";
 
 const uuidSchema = z.string().refine(isUuid, {
   message: "must be a valid uuid",
@@ -23,6 +29,30 @@ const slugSchema = z
     message: "must not look like a uuid",
   });
 
+const memorySettingsSchema = z.object({
+  purpose: z.string().trim().min(1).max(4000),
+  charLimit: z
+    .number()
+    .int()
+    .min(MIN_MEMORY_CHAR_LIMIT)
+    .max(MAX_MEMORY_CHAR_LIMIT),
+  requireApproval: z.boolean(),
+});
+
+const memorySchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("none") }),
+  z.object({ type: z.literal("agent"), settings: memorySettingsSchema }),
+  z.object({
+    type: z.literal("agent_subject"),
+    settings: memorySettingsSchema,
+  }),
+  z.object({
+    type: z.literal("custom"),
+    settings: memorySettingsSchema,
+    memoryKey: z.string().trim().min(1).max(RUN_LABEL_MAX_LENGTH),
+  }),
+]);
+
 const base = {
   name: z.string().min(1),
   slug: slugSchema.optional(),
@@ -37,6 +67,7 @@ const base = {
   toolIds: z.array(uuidSchema).optional(),
   subAgentIds: z.array(uuidSchema).optional(),
   mcpTools: z.array(agentMcpToolSchema).optional(),
+  memory: memorySchema.optional(),
 };
 
 export const agentCreateSchema = z.object(base);

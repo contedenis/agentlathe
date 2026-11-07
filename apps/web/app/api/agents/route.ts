@@ -11,7 +11,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const parsed = await parseBody(req, agentCreateSchema);
   if ("error" in parsed) return parsed.error;
-  const { skillIds, toolIds, subAgentIds, mcpTools, ...agentFields } =
+  const { skillIds, toolIds, subAgentIds, mcpTools, memory, ...agentFields } =
     parsed.data;
   const slug = agentFields.slug ?? agentSlug(agentFields.name);
 
@@ -26,6 +26,7 @@ export async function POST(req: Request) {
         toolIds,
         subAgentIds,
         mcpTools,
+        memory,
       });
       return created;
     });

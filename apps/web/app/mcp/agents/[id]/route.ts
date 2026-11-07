@@ -6,8 +6,10 @@ import {
   generateWithApprovals,
   loadActiveAgent,
   type PendingApproval,
+  type RunContext,
 } from "@agentlathe/runner";
 import { mcpApprovalBroker as broker } from "@/lib/approval-broker";
+import { readLabelHeader } from "@/lib/run-context";
 import { createRecorder } from "@/lib/run-recorder";
 
 const SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18"];
@@ -69,7 +71,13 @@ function streamAgentCall(
     canElicit,
     progressToken,
     signal,
-  }: { canElicit: boolean; progressToken?: unknown; signal: AbortSignal },
+    run,
+  }: {
+    canElicit: boolean;
+    progressToken?: unknown;
+    signal: AbortSignal;
+    run: RunContext;
+  },
 ) {
   const encoder = new TextEncoder();
   const abort = new AbortController();
@@ -124,7 +132,11 @@ function streamAgentCall(
           });
         });
 
-      const recorder = createRecorder({ agent, source: "mcp" });
+      const recorder = createRecorder({
+        agent,
+        source: "mcp",
+        subjectId: run.subjectId,
+      });
       let stats: AgentRunStats | undefined;
       try {
         const { text } = await generateWithApprovals(agent, message, {
@@ -134,6 +146,7 @@ function streamAgentCall(
           onStats: (runStats) => {
             stats = runStats;
           },
+          run,
         });
         await recorder.record({ stats });
         await recorder.attachTranscript(
@@ -282,12 +295,20 @@ export async function POST(
         rpcError(message.id, -32602, "The 'message' field is required."),
       );
 
+    const subject = readLabelHeader(req.headers, "x-subject-id");
+    if (!subject.ok)
+      return Response.json(rpcError(message.id, -32602, subject.error));
+    const memoryKey = readLabelHeader(req.headers, "x-memory-key");
+    if (!memoryKey.ok)
+      return Response.json(rpcError(message.id, -32602, memoryKey.error));
+
     return streamAgentCall(message.id, agent, args.message, {
       canElicit: broker.canElicit(sessionId),
       progressToken: (
         message.params?._meta as Record<string, unknown> | undefined
       )?.progressToken,
       signal: req.signal,
+      run: { subjectId: subject.value, memoryKey: memoryKey.value },
     });
   }
 

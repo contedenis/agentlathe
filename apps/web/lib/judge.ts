@@ -131,7 +131,7 @@ export async function askJudge({
   if (!res.ok) {
     const message = errorMessageOf(body);
     const hint = /does not exist/i.test(message)
-      ? "; check the judge model in Settings"
+      ? '; check the judge model under "What to record" in /metrics'
       : "";
     throw new Error(
       `the Decisions API returned HTTP ${res.status}: ${message}${hint}`,

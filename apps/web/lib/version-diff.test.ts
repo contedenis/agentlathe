@@ -31,6 +31,7 @@ const base: VersionSnapshot = {
     },
   ],
   subAgents: [{ slug: "writer", description: "Writes replies" }],
+  memoryStores: [],
   descendants: [{ slug: "writer", hash: "h1" }],
 };
 
@@ -271,6 +272,41 @@ describe("diffVersions — what changed between two agent versions", () => {
     ]);
   });
 
+  it("reports a memory added or edited, and reads versions saved before memory existed", () => {
+    const store = {
+      name: "Lessons",
+      scope: "agent" as const,
+      purpose: "What you learned.",
+      charLimit: 8000,
+      requireApproval: false,
+    };
+    const { memoryStores: _, ...older } = base;
+
+    expect(diffVersions(older, edit({ memoryStores: [store] })).summary).toBe(
+      "+1 memory",
+    );
+    expect(
+      diffVersions(
+        edit({ memoryStores: [store] }),
+        edit({ memoryStores: [{ ...store, charLimit: 12000 }] }),
+      ).entities,
+    ).toEqual([
+      {
+        kind: "memory",
+        name: "Lessons",
+        status: "changed",
+        fields: [
+          {
+            label: "Character limit",
+            kind: "value",
+            from: "8000",
+            to: "12000",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("says so when nothing visible changed", () => {
     expect(diffVersions(base, base).summary).toBe("no visible change");
   });
@@ -286,6 +322,7 @@ describe("readSnapshot — tolerating snapshots of another shape", () => {
       httpTools: [],
       mcpServers: [{ name: "x", toolNames: [], approvalToolNames: [] }],
       subAgents: [],
+      memoryStores: [],
       descendants: [],
     });
   });

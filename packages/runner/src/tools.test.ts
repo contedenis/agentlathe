@@ -84,6 +84,8 @@ describe("buildSubAgentTools — recursion guards", () => {
       callStack: new Set(["parent", "child-1"]),
       depth: 0,
       subAgentBudget: { remaining: 20 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools(
       "parent",
@@ -114,6 +116,8 @@ describe("buildSubAgentTools — recursion guards", () => {
       callStack: new Set(["parent"]),
       depth: 5,
       subAgentBudget: { remaining: 20 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools(
       "parent",
@@ -147,6 +151,8 @@ describe("buildSubAgentTools — recursion guards", () => {
       callStack: new Set(["root"]),
       depth: 0,
       subAgentBudget: { remaining: 20 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools("root", ctx, buildSubAgentRuntime);
 
@@ -174,6 +180,9 @@ describe("buildSubAgentTools — recursion guards", () => {
     expect(ctxB.callStack.has("A")).toBe(false);
 
     expect([...ctx.callStack]).toEqual(["root"]);
+    expect(ctxA.run).toBe(ctx.run);
+    expect(ctxB.run).toBe(ctx.run);
+    expect(ctxA.memoryDrafts).toBe(ctx.memoryDrafts);
   });
 
   it("security: the child runtime is built with the headless strategy → a needs_approval tool is denied, not executed", async () => {
@@ -194,6 +203,8 @@ describe("buildSubAgentTools — recursion guards", () => {
       callStack: new Set(["parent"]),
       depth: 0,
       subAgentBudget: { remaining: 20 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools(
       "parent",
@@ -233,6 +244,9 @@ describe("buildSubAgentTools — child stats reporting", () => {
       approvalsGranted: 0,
       calls: [],
       mcpFailures: [],
+      warnings: [],
+      memorySeen: [],
+      memoryWrites: [],
     };
     vi.mocked(buildSubAgentRuntime).mockResolvedValue({
       agent: { generate: vi.fn().mockResolvedValue({ text: "ok" }) },
@@ -247,6 +261,8 @@ describe("buildSubAgentTools — child stats reporting", () => {
         callStack: new Set(["parent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
       onChildStats,
@@ -279,6 +295,8 @@ describe("buildSubAgentTools — fan-out budget", () => {
       callStack: new Set(["parent"]),
       depth: 0,
       subAgentBudget: { remaining: 2 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools(
       "parent",
@@ -301,6 +319,8 @@ describe("buildSubAgentTools — fan-out budget", () => {
       callStack: new Set(["parent"]),
       depth: 0,
       subAgentBudget: { remaining: 5 },
+      run: { subjectId: null, memoryKey: null },
+      memoryDrafts: new Map(),
     };
     const toolset = await buildSubAgentTools(
       "parent",
@@ -501,6 +521,8 @@ describe("buildTools — approval names union across sources", () => {
         callStack: new Set(["agent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
     );
@@ -807,6 +829,8 @@ describe("buildSubAgentTools — sub-agents slugging to the same name", () => {
         callStack: new Set(["parent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
     );
@@ -843,6 +867,8 @@ describe("buildTools — merging sources with a collision", () => {
         callStack: new Set(["agent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
     );
@@ -897,6 +923,8 @@ describe("makeMcpCleanup — through the cleanup from buildTools", () => {
         callStack: new Set(["agent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
     );
@@ -926,6 +954,8 @@ describe("makeMcpCleanup — through the cleanup from buildTools", () => {
         callStack: new Set(["agent"]),
         depth: 0,
         subAgentBudget: { remaining: 20 },
+        run: { subjectId: null, memoryKey: null },
+        memoryDrafts: new Map(),
       },
       buildSubAgentRuntime,
     );
@@ -973,6 +1003,8 @@ describe("buildTools — a sibling failure closes the MCP clients that already c
           callStack: new Set(["agent"]),
           depth: 0,
           subAgentBudget: { remaining: 20 },
+          run: { subjectId: null, memoryKey: null },
+          memoryDrafts: new Map(),
         },
         buildSubAgentRuntime,
       ),
@@ -993,6 +1025,8 @@ describe("buildTools — a sibling failure closes the MCP clients that already c
           callStack: new Set(["agent"]),
           depth: 0,
           subAgentBudget: { remaining: 20 },
+          run: { subjectId: null, memoryKey: null },
+          memoryDrafts: new Map(),
         },
         buildSubAgentRuntime,
       ),

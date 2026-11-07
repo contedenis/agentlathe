@@ -1,6 +1,9 @@
 "use client";
 
-import type { ScheduleFrequency } from "@agentlathe/db/constants";
+import {
+  RUN_LABEL_MAX_LENGTH,
+  type ScheduleFrequency,
+} from "@agentlathe/db/constants";
 import { type FormEvent, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -35,6 +38,8 @@ export type ScheduleFormValues = {
   startDate: string | null;
   timezone: string;
   input: string;
+  subjectId: string | null;
+  memoryKey: string | null;
 };
 
 const FREQUENCIES: { value: ScheduleFrequency; label: string }[] = [
@@ -80,6 +85,8 @@ export function ScheduleForm({
     () => initial?.startDate ?? today(timezone),
   );
   const [input, setInput] = useState(initial?.input ?? "");
+  const [subjectId, setSubjectId] = useState(initial?.subjectId ?? "");
+  const [memoryKey, setMemoryKey] = useState(initial?.memoryKey ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,6 +123,8 @@ export function ScheduleForm({
       startDate: frequency === "monthly" ? startDate : null,
       timezone,
       input,
+      subjectId: subjectId.trim() || null,
+      memoryKey: memoryKey.trim() || null,
     };
     try {
       if (mode === "create") {
@@ -273,6 +282,34 @@ export function ScheduleForm({
           <span className="text-xs text-muted-foreground">
             What the agent receives each time. Variables:{" "}
             {INPUT_VARIABLES.map((variable) => `{{${variable}}}`).join(", ")}.
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="schedule-subject">Subject</Label>
+            <Input
+              id="schedule-subject"
+              value={subjectId}
+              onChange={(e) => setSubjectId(e.target.value)}
+              maxLength={RUN_LABEL_MAX_LENGTH}
+              placeholder="none"
+              className="font-mono"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="schedule-memory-key">Memory key</Label>
+            <Input
+              id="schedule-memory-key"
+              value={memoryKey}
+              onChange={(e) => setMemoryKey(e.target.value)}
+              maxLength={RUN_LABEL_MAX_LENGTH}
+              placeholder="none"
+              className="font-mono"
+            />
+          </div>
+          <span className="col-span-2 text-xs text-muted-foreground">
+            Optional. The same as the <code>x-subject-id</code> and{" "}
+            <code>x-memory-key</code> headers on <code>/v1</code>.
           </span>
         </div>
         <div className="flex flex-col gap-1.5">

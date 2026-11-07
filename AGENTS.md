@@ -10,7 +10,7 @@ Working guide for coding agents and anyone about to change this codebase. It rec
 
 A self-hosted workshop for AI agents: define them in a DB, expose each as an OpenAI-compatible model, and **review what they actually did**. See [`README.md`](README.md) for the product framing and [`docs/USAGE.md`](docs/USAGE.md) for what each feature does.
 
-Deliberately absent, in roadmap order: **replay** (re-running recorded inputs against the current agent and judging them; evaluators today only judge runs that already happened), **memory** — plus, orthogonal to that chain, **native provider SDKs** (any OpenAI-compatible endpoint already connects via `PROVIDER_BASE_URL`; absent are native Anthropic support and `/models` metadata fallbacks). Also absent: auth (single-tenant by design). Do not add any of them uninvited.
+Deliberately absent, in roadmap order: **replay** (re-running recorded inputs against the current agent and judging them; evaluators today only judge runs that already happened) — plus, orthogonal to that chain, **native provider SDKs** (any OpenAI-compatible endpoint already connects via `PROVIDER_BASE_URL`; absent are native Anthropic support and `/models` metadata fallbacks). Also absent: auth (single-tenant by design). Do not add any of them uninvited.
 
 ## Commands
 
@@ -27,7 +27,7 @@ pnpm test:coverage     # the unit suites with a v8 report, scoped to the pure mo
 pnpm test:integration  # Testcontainers suites: requires Docker, fails loudly without it
 pnpm test:e2e          # requires Docker AND PROVIDER_API_KEY (env or apps/web/.env.local), fails loudly without either.
                        # Runs two suites: the runner recording E2E (vitest) and the web browser E2E (Playwright, needs
-                       # `npx playwright install chromium` once; boots next dev on :3100 against a Testcontainers Postgres)
+                       # `pnpm --filter web exec playwright install chromium` once; boots next dev on :3100 against a Testcontainers Postgres)
 ```
 
 [`docs/DEVELOPING.md`](docs/DEVELOPING.md) is canonical for what these cost and when to reach for each.
@@ -86,7 +86,7 @@ The mechanism is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#met
 - **Compaction**: `prepareStep` + `pruneMessages` (removes, does not summarize, and preserves tool-call/tool-result pairing). Never inject a floating `system` message mid-array.
 - **Tool names reaching the provider must match `[a-zA-Z0-9_-]`** — providers reject anything else and the whole call fails. Names are free text in the UI; every derived name comes from `packages/db/src/naming.ts` (`slug`, `httpToolName`, `mcpToolName`, `subAgentToolName`, `agentAskToolName`) — never re-derive one inline, in TS or in SQL. Note that `mcpToolName` slugs only the server prefix: the remote tool name is passed through untouched, so a remote tool with an exotic name is a provider-side failure you cannot fix by renaming locally.
 - **Agent slugs**: `agentSlug()` derives one from a name; a user-supplied slug must match `AGENT_SLUG_PATTERN` (`/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/`) and `AGENT_SLUG_MAX_LENGTH` (64). The slug is the **public identifier**: it is the model id in `/v1` and the path segment of the MCP endpoint. Changing an agent's slug breaks every external client pointing at it.
-- **`load_skill` is a reserved tool name.** If an agent has a tool that resolves to it, `assembleRuntime` renames the user's tool via `addTool` and carries its kind **and its approval gate** to the new name. Any code that renames a tool must carry both, or a gated tool silently loses its gate.
+- **`load_skill`, `memory_add`, `memory_update` and `memory_delete` are reserved tool names** (`RESERVED_TOOL_NAMES`, `packages/db/src/naming.ts`). If an agent has a tool that resolves to one, `assembleRuntime` renames the user's tool via `addTool` and carries its kind **and its approval gate** to the new name. Any code that renames a tool must carry both, or a gated tool silently loses its gate.
 - **MCP auth env references**: an auth header value starting with `AGENTLATHE_SECRET_` is an env var *name*, resolved whole-value in `buildAuth` (`packages/runner/src/helpers.ts`) at connection time and nowhere else; a missing or empty var throws before any request goes out. The app must NEVER read `AGENTLATHE_SECRET_*` for its own configuration — that prefix is the allowlist keeping the no-auth dashboard from exfiltrating app secrets, and any app config landing in it silently breaks the guarantee.
 - **No helper exists to *serve* OpenAI-compatible** (`createOpenAICompatible` is for *consuming*). The `/v1` SSE serialization, including `tool_calls` deltas, is hand-written in `packages/openai-server/src/index.ts`, re-exported through `packages/runner`.
 - Tool `inputSchema`: use `jsonSchema(input_schema)`, never hand-convert JSON Schema → Zod.
@@ -102,10 +102,21 @@ The mechanism is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#met
 
 ### Transport / API split
 
-- **Dashboard (Playground)**: `POST /api/agents/[id]/chat` → `streamAgentForUI` (UIMessageStream for `useChat`). `needs_approval` tools pause the loop and surface an approval banner. Records run + transcript, and returns the thread id in `x-thread-id`.
-- **Public `/v1` (OpenAI-compatible)** is **stateless**: the client owns the full `messages` array. Accepts an optional `x-thread-id`. Headless `needs_approval` tools are **denied** with an explanatory tool-result, never left hanging.
-- **MCP** (`/mcp/agents/[id]`): one tool per agent (`ask_{slug}`), with elicitation-based approval when the client supports it, headless auto-deny when it does not.
+- **Dashboard (Playground)**: `POST /api/agents/[id]/chat` → `streamAgentForUI` (UIMessageStream for `useChat`). `needs_approval` tools pause the loop and surface an approval banner. Records run + transcript, and returns the thread id in `x-thread-id`. The subject and memory key come in the body (`subjectId` / `memoryKey`).
+- **Public `/v1` (OpenAI-compatible)** is **stateless**: the client owns the full `messages` array. Accepts optional `x-thread-id`, `x-subject-id` and `x-memory-key` headers (the last two through `readLabelHeader`, `apps/web/lib/run-context.ts`). Headless `needs_approval` tools are **denied** with an explanatory tool-result, never left hanging.
+- **MCP** (`/mcp/agents/[id]`): one tool per agent (`ask_{slug}`), with elicitation-based approval when the client supports it, headless auto-deny when it does not. Reads `x-subject-id` / `x-memory-key` from the HTTP request like `/v1`.
 - **Agent lookup is centralised in `loadActiveAgent`** (`packages/runner/src/loaders.ts`) and every transport uses it: if the string is a uuid, look up by id; otherwise by **slug (preferred)**, falling back to name. Never compare an arbitrary name against a uuid column, and never query `agents` by hand in a transport.
+
+### Memory
+
+The mechanism is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#memory). What you must not break:
+
+- **One memory per agent.** `memory_stores` is owned by its agent (`owner_agent_id`, cascade) with at most one row per scope and one active; there is no shared memory. A custom key is a selector the request must match, not a store other agents can use.
+- **A run reads a frozen snapshot and writes at the end.** The memory tools only append to `RuntimeCtx.memoryDrafts`, shared by reference with sub-agents like `subAgentBudget`; `createRunRecorder` commits them after `recordAgentRun`, because the run id does not exist before. Writing to the database from a tool's `execute` breaks "seen from the next run", the per-run diff, and the run id on every version.
+- **Versions are append-only.** Every change to an entry's text, deletions and restores included, is a new `memory_entry_versions` row under a new partition revision, through `applyMemoryOps` (`packages/db/src/memory.ts`); nothing updates or deletes a version except deleting the partition (and `run_id` going null when its run expires). Pinning is a flag on the entry, not a version. `memory_seen` stores only revisions, and the run page rebuilds content with `readPartitionAt`: an in-place edit would rewrite what past runs saw.
+- **Compaction never overwrites a newer change.** It applies with `expectedRevision` and under an advisory lock per partition, runs off the response via `after()`, and its failures are recorded, never thrown at the run.
+- **A missing subject or key is a warning, never an error.** The run goes on without memory and records `warnings` (`agent_runs.warnings`); a transport must not refuse the request for it.
+- **Forgetting a subject leaves no trace of the id.** `forgetSubject` deletes rows rather than tombstoning them; anything new that stores a subject id must be added to it.
 
 ### Scheduler
 
@@ -124,7 +135,7 @@ The mechanism is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#scheduler). Wh
 - **No auth**: single-tenant, bind to `127.0.0.1`, auth delegated to the deploy's reverse proxy.
 - **No `WorkflowAgent`**: it is stream-only (no `generate()`, which sub-agents and `/v1` both need), requires the Workflow DevKit runtime and a durable backend, and its transport — writing `ModelCallStreamPart`s to a `writable`, plus a separate GET endpoint to resume — does not compose with `createAgentUIStream`. The durability it buys is not what this project is missing. Revisit if runs ever have to survive a restart.
 - MCP: http transport only, explicit tool selection, no wildcard, no client pooling.
-- **No redaction of transcripts.** A deliberate stance documented in [`SECURITY.md`](SECURITY.md), not an oversight to fix quietly.
+- **No redaction of transcripts or memory.** A deliberate stance documented in [`SECURITY.md`](SECURITY.md), not an oversight to fix quietly. `x-subject-id` and `x-memory-key` are labels, not credentials: the instance is single-tenant, and the proxy is what authenticates callers.
 
 ## Next.js 16 specifics
 

@@ -36,6 +36,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import { listAgentMemoryStores } from "./queries-memory";
 import { runDay } from "./queries-metrics";
 import type { EvaluationFilter } from "./run-evaluation-filter";
 
@@ -153,12 +154,14 @@ const evaluationFilterCondition: Record<EvaluationFilter, SQL> = {
 export async function listRunsPage({
   q,
   source,
+  subject,
   evaluation,
   limit,
   offset,
 }: {
   q: string;
   source?: string;
+  subject?: string;
   evaluation?: EvaluationFilter;
   limit: number;
   offset: number;
@@ -168,6 +171,7 @@ export async function listRunsPage({
   const baseFilter = and(
     query ? ilike(agents.name, `%${escaped}%`) : undefined,
     source ? eq(agentRuns.source, source) : undefined,
+    subject ? eq(agentRuns.subjectId, subject) : undefined,
   );
   const filter = and(
     baseFilter,
@@ -182,6 +186,7 @@ export async function listRunsPage({
         status: agentRuns.status,
         durationMs: agentRuns.durationMs,
         createdAt: agentRuns.createdAt,
+        subjectId: agentRuns.subjectId,
         agentId: agents.id,
         agentName: agents.name,
         openDrafts: openDraftCount,
@@ -246,12 +251,15 @@ export async function getRunForReview(id: string) {
       status: agentRuns.status,
       model: agentRuns.model,
       threadId: agentRuns.threadId,
+      subjectId: agentRuns.subjectId,
       durationMs: agentRuns.durationMs,
       steps: agentRuns.steps,
       toolCalls: agentRuns.toolCalls,
       inputTokens: agentRuns.inputTokens,
       outputTokens: agentRuns.outputTokens,
       mcpFailures: agentRuns.mcpFailures,
+      warnings: agentRuns.warnings,
+      memorySeen: agentRuns.memorySeen,
       error: agentRuns.error,
       createdAt: agentRuns.createdAt,
       agentId: agents.id,
@@ -338,7 +346,7 @@ type McpRefGroup = {
 
 export async function getAgentDetail(id: string) {
   if (!isUuid(id)) return null;
-  const [agentRow, skillRows, toolRows, mcpRows, subAgentRows] =
+  const [agentRow, skillRows, toolRows, mcpRows, subAgentRows, memoryRows] =
     await Promise.all([
       db
         .select()
@@ -372,6 +380,7 @@ export async function getAgentDetail(id: string) {
         .from(agentSubAgents)
         .innerJoin(agents, eq(agentSubAgents.childId, agents.id))
         .where(eq(agentSubAgents.parentId, id)),
+      listAgentMemoryStores(id),
     ]);
 
   if (!agentRow) return null;
@@ -421,6 +430,7 @@ export async function getAgentDetail(id: string) {
     tools: toolRows,
     mcpTools: mcpToolGroups,
     subAgents: subAgentRows,
+    memoryStores: memoryRows,
     warnings,
   };
 }

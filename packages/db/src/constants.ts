@@ -11,6 +11,7 @@ export const AGENT_RUN_CALL_KINDS = [
   "mcp",
   "sub_agent",
   "skill",
+  "memory",
 ] as const;
 export type AgentRunCallKind = (typeof AGENT_RUN_CALL_KINDS)[number];
 
@@ -70,6 +71,84 @@ export const SCHEDULE_OCCURRENCE_STATUSES = [
 ] as const;
 export type ScheduleOccurrenceStatus =
   (typeof SCHEDULE_OCCURRENCE_STATUSES)[number];
+
+export const RUN_LABEL_MAX_LENGTH = 200;
+
+export type RunWarning = { code: string; message: string };
+
+export type MemorySeen = {
+  storeId: string;
+  partitionKey: string;
+  revision: number;
+};
+
+export const MEMORY_SCOPES = ["agent", "agent_subject", "custom"] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
+
+export const MEMORY_ENTRY_OPS = [
+  "add",
+  "update",
+  "delete",
+  "compaction",
+  "restore",
+] as const;
+export type MemoryEntryOp = (typeof MEMORY_ENTRY_OPS)[number];
+
+export const MEMORY_AUTHORS = ["agent", "human", "compaction"] as const;
+export type MemoryAuthor = (typeof MEMORY_AUTHORS)[number];
+
+export const MEMORY_PROPOSAL_OPS = ["add", "update", "delete"] as const;
+export const MEMORY_PROPOSAL_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+] as const;
+export type MemoryProposalStatus = (typeof MEMORY_PROPOSAL_STATUSES)[number];
+
+export const MEMORY_COMPACTION_STATUSES = [
+  "running",
+  "applied",
+  "failed",
+] as const;
+export type MemoryCompactionStatus =
+  (typeof MEMORY_COMPACTION_STATUSES)[number];
+
+export const DEFAULT_MEMORY_CHAR_LIMIT = 8000;
+export const MAX_MEMORY_CHAR_LIMIT = 20000;
+export const MEMORY_ENTRY_MAX_LENGTH = 500;
+export const COMPACTION_TRIGGER_SHARE = 0.9;
+export const COMPACTION_TARGET_SHARE = 0.6;
+
+export const DEFAULT_MEMORY_PURPOSES: Record<
+  Exclude<MemoryScope, "custom">,
+  string
+> = {
+  agent:
+    'Things you learned about doing your job that hold for every conversation: procedures, conventions, decisions, and facts about the systems and tools you use (e.g. "Refunds over $500 go to the billing team", "The orders API returns 404 for archived orders; use the archive endpoint"). Never store anything about a specific person or customer, and nothing that only mattered in one conversation.',
+  agent_subject:
+    'Your own history with this subject in your job: open cases, commitments you made ("promised to follow up on ticket 123 on Friday"), what was tried and how it ended, and preferences that only matter for your task. General facts about the subject do not go here, and neither do procedures that apply to everyone.',
+};
+
+export const MEMORY_SHORT_ID_PREFIX: Record<MemoryScope, string> = {
+  agent: "a",
+  agent_subject: "s",
+  custom: "c",
+};
+
+export type MemoryRunKeys = {
+  agentId: string;
+  subjectId: string | null;
+  memoryKey: string | null;
+};
+
+export function memoryPartitionKey(
+  scope: MemoryScope,
+  { agentId, subjectId, memoryKey }: MemoryRunKeys,
+): string | null {
+  if (scope === "agent") return agentId;
+  if (scope === "custom") return memoryKey;
+  return subjectId;
+}
 
 export const DEFAULT_AGENT_RUN_TTL_DAYS = 90;
 export const MAX_AGENT_RUN_TTL_DAYS = 3650;

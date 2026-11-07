@@ -4,7 +4,7 @@ Running agentlathe outside the Docker quickstart, and what to get right before i
 
 ## Running without Docker
 
-You supply the Postgres. **Give agentlathe a database of its own** — it cannot share one. The migrations create 13 tables in `public`, and five of the names are generic enough to collide with something you already have: `agents`, `tools`, `skills`, `settings`, `mcp_servers`. Pointed at a database that already uses one of those, the migration aborts on the first collision and prints the `CREATE TABLE` it could not run, without saying that the name was already taken.
+You supply the Postgres. **Give agentlathe a database of its own** — it cannot share one. The migrations create 24 tables in `public`, and six of the names are generic enough to collide with something you already have: `agents`, `tools`, `skills`, `settings`, `schedules`, `mcp_servers`. Pointed at a database that already uses one of those, the migration aborts on the first collision and prints the `CREATE TABLE` it could not run, without saying that the name was already taken.
 
 Its own schema is not a way around this: a `DATABASE_URL` carrying `?options=-c%20search_path%3D...` does set the search path, but the generated foreign keys are qualified as `"public"."agents"`, so the run dies on the first constraint instead.
 
@@ -59,7 +59,9 @@ The [`Dockerfile`](../Dockerfile) is a multi-stage build with two consumable tar
 
 **Put a reverse proxy with authentication in front of it. This is not optional.** agentlathe has no auth of its own. Anyone who reaches the dashboard can read every transcript you recorded, edit every agent, and call every tool those agents can reach. Terminate TLS and authenticate at the proxy (nginx/Caddy with OAuth2 or basic auth, an authenticating load balancer, a VPN), and keep the app itself bound to loopback or a private network.
 
-**Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, and transcripts **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
+**If the proxy authenticates the callers of `/v1` or MCP, let it name the subject.** agentlathe takes `x-subject-id` as sent, and a run's subject picks which memory it reads and writes. Have the proxy set `x-subject-id` from the identity it checked, overwriting any value the client sent, so one caller cannot act as another; the header is agentlathe's own name, not one auth proxies set for you (such as `x-user` or `x-forwarded-user`). See [SECURITY.md](../SECURITY.md#memory-trusts-the-callers-labels-and-keeps-what-it-is-told).
+
+**Back up the `postgres_data` volume.** It holds everything: agents, tool definitions, MCP credentials **in plaintext** (except headers stored as `AGENTLATHE_SECRET_*` env references, which carry only the variable name — see [SECURITY.md](../SECURITY.md#secrets-are-stored-in-plaintext)), runs, transcripts and agent memory **in plaintext**. A database dump is therefore a dump of every secret and every recorded conversation — treat the backups with the same care as the database. See [SECURITY.md](../SECURITY.md).
 
 **This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, run evaluations that finish in the background after the response has gone out, and the [scheduler](#the-scheduler). A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
 

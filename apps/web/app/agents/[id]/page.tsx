@@ -1,3 +1,5 @@
+import { getContextLimit } from "@agentlathe/runner";
+import { TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActiveBadge } from "@/components/active-badge";
@@ -8,17 +10,22 @@ import { CriteriaPanel } from "@/components/criteria-panel";
 import { DeleteResourceButton } from "@/components/delete-resource-button";
 import { PageHeader } from "@/components/page-header";
 import { ToggleActiveButton } from "@/components/toggle-active-button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MEMORY_SCOPE_LABEL } from "@/lib/memory-rules";
 import {
   getAgentCriteria,
   getAgentDetail,
   getCriteriaCopySources,
 } from "@/lib/queries";
+import { countRunWarnings, WARNING_WINDOW_DAYS } from "@/lib/queries-memory";
 import { listAgentSchedules } from "@/lib/queries-schedules";
 import { describeTrigger } from "@/lib/scheduler/calendar";
+
+const MEMORY_CONTEXT_SHARE = 0.25;
 
 function RefList({
   items,
@@ -48,13 +55,26 @@ export default async function AgentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [agent, criteriaData, copySources, agentSchedules] = await Promise.all([
-    getAgentDetail(id),
-    getAgentCriteria(id),
-    getCriteriaCopySources(id),
-    listAgentSchedules(id),
-  ]);
+  const [agent, criteriaData, copySources, agentSchedules, runWarnings] =
+    await Promise.all([
+      getAgentDetail(id),
+      getAgentCriteria(id),
+      getCriteriaCopySources(id),
+      listAgentSchedules(id),
+      countRunWarnings(id),
+    ]);
   if (!agent) notFound();
+  const usedMemories = agent.memoryStores.filter(
+    (store) => store.isActive || store.scope === "custom",
+  );
+  const memoryTokens = Math.ceil(
+    agent.memoryStores
+      .filter((store) => store.isActive)
+      .reduce((sum, store) => sum + store.charLimit, 0) / 4,
+  );
+  const contextLimit =
+    memoryTokens > 0 ? await getContextLimit(agent.model) : 0;
+  const memoryShare = contextLimit ? memoryTokens / contextLimit : 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -67,6 +87,36 @@ export default async function AgentDetailPage({
       />
 
       <AgentWarningsBanner warnings={agent.warnings} />
+
+      {memoryShare > MEMORY_CONTEXT_SHARE && (
+        <Alert>
+          <TriangleAlertIcon />
+          <AlertTitle>Memory can take a large share of the context</AlertTitle>
+          <AlertDescription>
+            Full, its memory adds about {memoryTokens.toLocaleString("en-US")}{" "}
+            tokens to every run, {Math.round(memoryShare * 100)}% of the{" "}
+            {contextLimit.toLocaleString("en-US")} tokens {agent.model} takes.
+            Lower its character limit or use a model with a larger context.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {runWarnings.length > 0 && (
+        <Alert>
+          <TriangleAlertIcon />
+          <AlertTitle>Runs that ran without their memory</AlertTitle>
+          <AlertDescription>
+            <ul>
+              {runWarnings.map((warning) => (
+                <li key={warning.message}>
+                  {warning.runs} {warning.runs === 1 ? "run" : "runs"} in the
+                  last {WARNING_WINDOW_DAYS} days: {warning.message}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex gap-2">
         <Button
@@ -119,6 +169,32 @@ export default async function AgentDetailPage({
                       {agent.autoEvaluate
                         ? "New runs judged automatically"
                         : "Only when re-evaluated"}
+                    </dd>
+                    <dt className="text-muted-foreground">Memory</dt>
+                    <dd>
+                      {usedMemories.length === 0 ? (
+                        "None"
+                      ) : (
+                        <ul className="flex flex-col gap-0.5">
+                          {usedMemories.map((store) => (
+                            <li key={store.id}>
+                              <Link
+                                href={`/memory/${store.id}`}
+                                className="hover:underline"
+                              >
+                                {MEMORY_SCOPE_LABEL[store.scope]}
+                              </Link>
+                              {store.scope === "custom" && (
+                                <span className="text-muted-foreground">
+                                  {" "}
+                                  · {store.name}
+                                  {!store.isActive && " (inactive)"}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </dd>
                     <dt className="text-muted-foreground">Schedules</dt>
                     <dd>

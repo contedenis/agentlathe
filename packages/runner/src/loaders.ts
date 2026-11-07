@@ -5,7 +5,9 @@ import {
   agents,
   db,
   isUuid,
+  type MemoryScope,
   mcpServers,
+  memoryStores,
   skills,
 } from "@agentlathe/db";
 import { and, eq, or } from "drizzle-orm";
@@ -79,6 +81,51 @@ export async function loadSkills(agentId: string): Promise<SkillRow[]> {
     .from(agentSkills)
     .innerJoin(skills, eq(agentSkills.skillId, skills.id))
     .where(and(eq(agentSkills.agentId, agentId), eq(skills.isActive, true)));
+}
+
+export type MemoryStoreRow = {
+  id: string;
+  name: string;
+  agentName: string;
+  scope: MemoryScope;
+  purpose: string;
+  charLimit: number;
+  requireApproval: boolean;
+  expectedKey: string | null;
+};
+
+const MEMORY_SCOPE_ORDER: MemoryScope[] = ["agent", "agent_subject", "custom"];
+
+export async function loadMemoryStores(
+  agentId: string,
+): Promise<MemoryStoreRow[]> {
+  const rows = await db
+    .select({
+      id: memoryStores.id,
+      name: memoryStores.name,
+      agentName: agents.name,
+      scope: memoryStores.scope,
+      purpose: memoryStores.purpose,
+      charLimit: memoryStores.charLimit,
+      requireApproval: memoryStores.requireApproval,
+      expectedKey: memoryStores.memoryKey,
+    })
+    .from(memoryStores)
+    .innerJoin(agents, eq(agents.id, memoryStores.ownerAgentId))
+    .where(
+      and(
+        eq(memoryStores.ownerAgentId, agentId),
+        eq(memoryStores.isActive, true),
+      ),
+    );
+  return rows
+    .map((row) => ({ ...row, scope: row.scope as MemoryScope }))
+    .sort(
+      (a, b) =>
+        MEMORY_SCOPE_ORDER.indexOf(a.scope) -
+        MEMORY_SCOPE_ORDER.indexOf(b.scope),
+    )
+    .slice(0, 1);
 }
 
 export async function loadSubAgents(parentId: string): Promise<SubAgentRow[]> {

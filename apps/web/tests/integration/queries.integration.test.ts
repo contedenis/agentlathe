@@ -216,6 +216,28 @@ describe("queries (requires Docker)", () => {
       expect(total).toBe(1);
       expect(rows[0].source).toBe("dashboard");
     });
+
+    it("filters by subject, exactly", async () => {
+      const agent = await makeAgentWithRuns("subjectmark agent");
+      await dbModule.db.insert(dbModule.agentRuns).values(
+        ["user-42", "user-420", null].map((subjectId) => ({
+          agentId: agent.id,
+          source: "v1",
+          subjectId,
+          durationMs: 5,
+        })),
+      );
+
+      const { rows, total } = await queries.listRunsPage({
+        q: "subjectmark",
+        subject: "user-42",
+        limit: 20,
+        offset: 0,
+      });
+
+      expect(total).toBe(1);
+      expect(rows[0].subjectId).toBe("user-42");
+    });
   });
 
   describe("getRunForReview", () => {

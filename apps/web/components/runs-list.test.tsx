@@ -17,6 +17,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     status: "ok",
     durationMs: 1200,
     createdAt: new Date("2026-10-01T10:00:00Z"),
+    subjectId: null,
     agentId: "a1",
     agentName: "Support",
     openDrafts: 0,
@@ -38,6 +39,7 @@ function renderList(props: Partial<Props> = {}) {
       total={1}
       query=""
       source=""
+      subject=""
       evaluation=""
       needsReviewTotal={0}
       page={1}
@@ -227,5 +229,24 @@ describe("RunsList evaluation filter", () => {
     renderList({ evaluation: "failed", runs: [], total: 0 });
 
     expect(screen.getByText("No runs match this filter.")).toBeInTheDocument();
+  });
+});
+
+describe("RunsList subject", () => {
+  it("links a run's subject to the runs filtered by it", () => {
+    renderList({ runs: [makeRun({ subjectId: "user 42" })] });
+
+    expect(screen.getByRole("link", { name: "user 42" })).toHaveAttribute(
+      "href",
+      "/runs?subject=user+42",
+    );
+  });
+
+  it("shows the active subject filter with a link that clears it", () => {
+    renderList({ subject: "user-42", source: "v1" });
+
+    expect(
+      screen.getByRole("button", { name: "Clear subject filter user-42" }),
+    ).toHaveAttribute("href", "/runs?source=v1");
   });
 });

@@ -7,6 +7,7 @@ import {
 import { after } from "next/server";
 import { evaluateRun, hasActiveCriteria } from "./evaluations";
 import { createLimiter } from "./limiter";
+import { scheduleCompaction } from "./memory-compaction";
 
 const backgroundLimit = createLimiter(3);
 
@@ -32,10 +33,11 @@ export function scheduleRunEvaluation(
 }
 
 export function createRecorder(
-  options: Omit<RunRecorderOptions, "onTranscriptSaved">,
+  options: Omit<RunRecorderOptions, "onTranscriptSaved" | "onMemoryCommitted">,
 ): RunRecorder {
   return createRunRecorder({
     ...options,
     onTranscriptSaved: (runId) => scheduleRunEvaluation(runId, options.agent),
+    onMemoryCommitted: scheduleCompaction,
   });
 }

@@ -8,6 +8,7 @@ import {
   toOpenAIChatCompletionStream,
 } from "@agentlathe/runner";
 import { z } from "zod";
+import { readLabelHeader } from "@/lib/run-context";
 import { createRecorder } from "@/lib/run-recorder";
 
 const requestSchema = z.object({
@@ -49,6 +50,13 @@ export async function POST(req: Request) {
   }
   const body = parsed.data;
 
+  const subject = readLabelHeader(req.headers, "x-subject-id");
+  if (!subject.ok)
+    return errorResponse(subject.error, "invalid_request_error", 400);
+  const memoryKey = readLabelHeader(req.headers, "x-memory-key");
+  if (!memoryKey.ok)
+    return errorResponse(memoryKey.error, "invalid_request_error", 400);
+
   let messages: ReturnType<typeof openAIMessagesToModelMessages>;
   try {
     messages = openAIMessagesToModelMessages(body.messages);
@@ -74,7 +82,12 @@ export async function POST(req: Request) {
       );
     }
     const threadId = req.headers.get("x-thread-id")?.slice(0, 200) || null;
-    recorder = createRecorder({ agent, source: "v1", threadId });
+    recorder = createRecorder({
+      agent,
+      source: "v1",
+      threadId,
+      subjectId: subject.value,
+    });
 
     ({
       agent: runtime,
@@ -82,6 +95,7 @@ export async function POST(req: Request) {
       stats,
     } = await buildAgentRuntime(agent, {
       buildApproval: buildHeadlessToolApproval,
+      run: { subjectId: subject.value, memoryKey: memoryKey.value },
     }));
   } catch (err) {
     console.error(err);

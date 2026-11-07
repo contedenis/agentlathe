@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
+import { MemoryConfig } from "@/components/forms/memory-config";
 import { ModelCombobox } from "@/components/forms/model-combobox";
 import {
   type McpToolSelection,
@@ -24,6 +25,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
+import {
+  type AgentMemoryConfig,
+  EMPTY_MEMORY_CONFIG,
+  memoryConfigBody,
+  memoryConfigError,
+} from "@/lib/memory-settings";
 import { apiRequest } from "@/lib/mutate";
 import type { ModelOption } from "@/lib/openrouter-models";
 import { useTokenCount } from "@/lib/use-token-count";
@@ -57,6 +64,7 @@ type AgentFormValues = {
   toolIds: string[];
   subAgentIds: string[];
   mcpTools: McpToolSelection[];
+  memory: AgentMemoryConfig;
 };
 
 export function AgentForm({
@@ -92,6 +100,9 @@ export function AgentForm({
   const [mcpTools, setMcpTools] = useState<McpToolSelection[]>(
     initial?.mcpTools ?? [],
   );
+  const [memory, setMemory] = useState<AgentMemoryConfig>(
+    initial?.memory ?? EMPTY_MEMORY_CONFIG,
+  );
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasMounted, setCanvasMounted] = useState(false);
   const [pending, setPending] = useState(false);
@@ -125,6 +136,12 @@ export function AgentForm({
       return;
     }
 
+    const memoryError = memoryConfigError(memory);
+    if (memoryError) {
+      setError(memoryError);
+      return;
+    }
+
     setPending(true);
     const body = {
       name,
@@ -139,6 +156,7 @@ export function AgentForm({
       toolIds,
       subAgentIds,
       mcpTools,
+      memory: memoryConfigBody(memory),
     };
     try {
       if (mode === "create") {
@@ -294,6 +312,15 @@ export function AgentForm({
             mcpTools={mcpTools}
             onMcpToolsChange={setMcpTools}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Memory</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <MemoryConfig value={memory} onChange={setMemory} />
         </CardContent>
       </Card>
 

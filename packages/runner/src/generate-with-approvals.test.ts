@@ -21,6 +21,10 @@ vi.mock("ai", async (importOriginal) => {
   }
   return { ...actual, ToolLoopAgent: MockToolLoopAgent };
 });
+vi.mock("./memory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./memory")>()),
+  loadMemory: vi.fn(async () => ({ stores: [], seen: [], warnings: [] })),
+}));
 vi.mock("./loaders", () => ({
   loadAgentConfig: vi.fn(),
   loadSkills: vi.fn(async () => []),

@@ -63,6 +63,7 @@ describe("seedRuns (requires Docker)", () => {
       expect(activeAgentIds.has(run.agentId)).toBe(true);
       expect(AGENT_RUN_SOURCES).toContain(run.source);
       expect(LEGAL_STATUSES).toContain(run.status);
+      if (run.source === "dashboard") expect(run.subjectId).toBeNull();
       expect(run.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
       expect(run.createdAt.getTime()).toBeGreaterThanOrEqual(
         Date.now() - (SEED_RUN_DAYS + 1) * DAY_MS,

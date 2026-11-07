@@ -4,16 +4,59 @@ import {
   agentSubAgents,
   agentTools,
   type db,
+  memoryStores,
 } from "@agentlathe/db";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
+import { MEMORY_SCOPE_LABEL } from "@/lib/memory-rules";
 import type { AgentInput } from "./schema";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type RelationsInput = Pick<
   Partial<AgentInput>,
-  "skillIds" | "toolIds" | "subAgentIds" | "mcpTools"
+  "skillIds" | "toolIds" | "subAgentIds" | "mcpTools" | "memory"
 >;
+
+type MemoryInput = NonNullable<AgentInput["memory"]>;
+
+async function saveMemory(tx: Tx, agentId: string, memory: MemoryInput) {
+  await tx
+    .update(memoryStores)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(memoryStores.ownerAgentId, agentId),
+        memory.type === "none"
+          ? undefined
+          : ne(memoryStores.scope, memory.type),
+      ),
+    );
+  if (memory.type === "none") return;
+
+  const values = {
+    ...memory.settings,
+    memoryKey: memory.type === "custom" ? memory.memoryKey : null,
+    isActive: true,
+    updatedAt: new Date(),
+  };
+  const [existing] = await tx
+    .update(memoryStores)
+    .set(values)
+    .where(
+      and(
+        eq(memoryStores.ownerAgentId, agentId),
+        eq(memoryStores.scope, memory.type),
+      ),
+    )
+    .returning({ id: memoryStores.id });
+  if (!existing)
+    await tx.insert(memoryStores).values({
+      ...values,
+      name: MEMORY_SCOPE_LABEL[memory.type],
+      scope: memory.type,
+      ownerAgentId: agentId,
+    });
+}
 
 export async function replaceAgentRelations(
   tx: Tx,
@@ -48,6 +91,8 @@ export async function replaceAgentRelations(
         );
     }
   }
+
+  if (input.memory) await saveMemory(tx, agentId, input.memory);
 
   if (input.mcpTools !== undefined) {
     await tx.delete(agentMcpTools).where(eq(agentMcpTools.agentId, agentId));

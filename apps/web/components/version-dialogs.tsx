@@ -10,6 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { MEMORY_SCOPE_LABEL as SCOPE_LABEL } from "@/lib/memory-rules";
 import { cn } from "@/lib/utils";
 import type {
   DiffLine,
@@ -25,6 +26,7 @@ const KIND_TITLE: Record<EntityKind, string> = {
   tool: "HTTP tools",
   mcp: "MCP servers",
   sub_agent: "Sub-agents",
+  memory: "Memory",
 };
 
 const STATUS_LABEL: Record<EntityChange["status"], string> = {
@@ -335,6 +337,30 @@ export function VersionConfigDialog({
                           : name,
                       )
                       .join(", ") || "None"}
+                  </span>
+                </Item>
+              </Card>
+            ))}
+          </Section>
+        )}
+        {config.memoryStores.length > 0 && (
+          <Section title={KIND_TITLE.memory}>
+            {config.memoryStores.map((store) => (
+              <Card key={store.name} name={store.name}>
+                <Item label="Scope">
+                  <span className="text-xs">{SCOPE_LABEL[store.scope]}</span>
+                </Item>
+                <Item label="Purpose">
+                  <span className="text-xs">{store.purpose}</span>
+                </Item>
+                <Item label="Character limit">
+                  <span className="font-mono text-xs">
+                    {store.charLimit.toLocaleString("en-US")}
+                  </span>
+                </Item>
+                <Item label="Requires approval">
+                  <span className="text-xs">
+                    {store.requireApproval ? "yes" : "no"}
                   </span>
                 </Item>
               </Card>

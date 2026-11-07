@@ -1,3 +1,4 @@
+import { RESERVED_TOOL_NAMES } from "@agentlathe/db";
 import {
   type PrepareStepFunction,
   pruneMessages,
@@ -10,7 +11,12 @@ import {
 } from "ai";
 import { z } from "zod";
 import type { ApprovalStrategy } from "./approval";
-import { MAX_SUB_AGENT_CALLS, type RuntimeCtx } from "./context";
+import {
+  MAX_SUB_AGENT_CALLS,
+  NO_RUN_CONTEXT,
+  type RunContext,
+  type RuntimeCtx,
+} from "./context";
 import {
   addTool,
   buildProvider,
@@ -24,19 +30,34 @@ import {
   type SkillRow,
 } from "./loaders";
 import {
+  buildMemoryTools,
+  loadMemory,
+  type MemoryStoreView,
+  renderMemorySection,
+} from "./memory";
+import {
   type AgentRunStats,
   addChildRunStats,
   createRunStatsCollector,
 } from "./recording";
 import { buildTools } from "./tools";
 
-export function buildSystemPrompt(agent: AgentRow, skills: SkillRow[]): string {
-  const base = agent.systemPrompt ?? "";
-  if (skills.length === 0) return base;
-  const listed = skills
-    .map((skill) => `- ${skill.name}: ${skill.description}`)
-    .join("\n");
-  return `${base}\n\n## Available skills\nUse the \`load_skill\` tool with the skill name to load its full content.\n${listed}`;
+export function buildSystemPrompt(
+  agent: AgentRow,
+  skills: SkillRow[],
+  memory: MemoryStoreView[] = [],
+): string {
+  const sections = [agent.systemPrompt ?? ""];
+  if (skills.length > 0) {
+    const listed = skills
+      .map((skill) => `- ${skill.name}: ${skill.description}`)
+      .join("\n");
+    sections.push(
+      `## Available skills\nUse the \`load_skill\` tool with the skill name to load its full content.\n${listed}`,
+    );
+  }
+  if (memory.length > 0) sections.push(renderMemorySection(memory));
+  return sections.join("\n\n");
 }
 
 export function buildLoadSkillTool(skills: SkillRow[]): Tool {
@@ -72,6 +93,7 @@ export function buildPrepareStep(
 type RuntimeOptions = {
   buildApproval?: ApprovalStrategy;
   stopWhen?: StopCondition<ToolSet>;
+  run?: RunContext;
 };
 
 export async function buildAgentRuntime(
@@ -84,6 +106,8 @@ export async function buildAgentRuntime(
       callStack: new Set([agent.id]),
       depth: 0,
       subAgentBudget: { remaining: MAX_SUB_AGENT_CALLS },
+      run: options?.run ?? NO_RUN_CONTEXT,
+      memoryDrafts: new Map(),
     },
     options,
   );
@@ -103,43 +127,59 @@ async function assembleRuntime(
   options?: RuntimeOptions,
 ) {
   const childRunStats: AgentRunStats[] = [];
-  const [skillsOutcome, composedOutcome] = await Promise.allSettled([
-    loadSkills(agent.id),
-    buildTools(agent.id, ctx, buildSubAgentRuntime, (childStats) =>
-      childRunStats.push(childStats),
-    ),
-  ]);
+  const [skillsOutcome, memoryOutcome, composedOutcome] =
+    await Promise.allSettled([
+      loadSkills(agent.id),
+      loadMemory(agent.id, ctx.run),
+      buildTools(agent.id, ctx, buildSubAgentRuntime, (childStats) =>
+        childRunStats.push(childStats),
+      ),
+    ]);
   if (composedOutcome.status === "rejected") throw composedOutcome.reason;
   const composed = composedOutcome.value;
   // Once buildTools resolved, every exit path owns live MCP clients to close.
-  if (skillsOutcome.status === "rejected") {
-    await composed.cleanup();
-    throw skillsOutcome.reason;
-  }
-  const skills = skillsOutcome.value;
+  for (const outcome of [skillsOutcome, memoryOutcome])
+    if (outcome.status === "rejected") {
+      await composed.cleanup();
+      throw outcome.reason;
+    }
+  const skills = (skillsOutcome as PromiseFulfilledResult<SkillRow[]>).value;
+  const memory = (
+    memoryOutcome as PromiseFulfilledResult<
+      Awaited<ReturnType<typeof loadMemory>>
+    >
+  ).value;
 
-  const conflicting = composed.tools.load_skill;
-  const toolset: ToolSet = {
-    ...composed.tools,
-    load_skill: buildLoadSkillTool(skills),
-  };
+  const builtins: Partial<Record<(typeof RESERVED_TOOL_NAMES)[number], Tool>> =
+    {
+      load_skill: buildLoadSkillTool(skills),
+      ...(memory.stores[0]
+        ? buildMemoryTools(memory.stores[0], ctx.memoryDrafts)
+        : {}),
+    };
+  const toolset: ToolSet = { ...composed.tools };
   const toolKinds = new Map(composed.toolKinds);
   const approvalToolNames = new Set(composed.approvalToolNames);
-  if (conflicting) {
-    // The renamed tool keeps its kind and its approval gate under the new name.
-    const finalName = addTool(toolset, "load_skill", conflicting);
-    toolKinds.set(finalName, composed.toolKinds.get("load_skill") ?? "tool");
-    if (approvalToolNames.delete("load_skill"))
-      approvalToolNames.add(finalName);
+  for (const name of RESERVED_TOOL_NAMES) {
+    const builtin = builtins[name];
+    if (!builtin) continue;
+    const conflicting = composed.tools[name];
+    toolset[name] = builtin;
+    if (conflicting) {
+      // The renamed tool keeps its kind and its approval gate under the new name.
+      const finalName = addTool(toolset, name, conflicting);
+      toolKinds.set(finalName, composed.toolKinds.get(name) ?? "tool");
+      if (approvalToolNames.delete(name)) approvalToolNames.add(finalName);
+    }
+    toolKinds.set(name, name === "load_skill" ? "skill" : "memory");
   }
-  toolKinds.set("load_skill", "skill");
 
   const collector = createRunStatsCollector(toolKinds);
 
   try {
     const runtime = new ToolLoopAgent({
       model: buildProvider(agent.model),
-      instructions: buildSystemPrompt(agent, skills),
+      instructions: buildSystemPrompt(agent, skills, memory.stores),
       tools: toolset,
       stopWhen: options?.stopWhen ?? stepCountIs(agent.maxSteps ?? 20),
       toolApproval: options?.buildApproval?.(approvalToolNames),
@@ -160,7 +200,12 @@ async function assembleRuntime(
           ...composed.mcpFailures,
           ...snapshot.mcpFailures,
         ];
+        snapshot.warnings = [...memory.warnings, ...snapshot.warnings];
+        snapshot.memorySeen = [...memory.seen, ...snapshot.memorySeen];
         for (const child of childRunStats) addChildRunStats(snapshot, child);
+        snapshot.memoryWrites = [...ctx.memoryDrafts.values()].filter(
+          (draft) => draft.ops.length > 0,
+        );
         return snapshot;
       },
     };

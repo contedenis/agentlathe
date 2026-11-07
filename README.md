@@ -18,12 +18,7 @@ Models come from any **OpenAI-compatible provider**. The default is [OpenRouter]
 
 **It's for** self-hosting a small agent platform where the review loop matters: you build an agent in a form, point clients at it, and then read the runs it produced to find out whether it is any good. Building the agent is the easy half; improving it on evidence rather than vibes is the half this tool is for.
 
-**It is not** any of these, and the gap is deliberate:
-
-- **No auth.** Single-tenant by design. The operator is expected to put a reverse proxy with authentication in front of it — see [Security model](#security-model-there-is-no-auth).
-- **No memory.** Agents do not accumulate knowledge between runs.
-
-The last one is an [idea](#ideas), not a commitment. Fix drafts — the notes you leave on a run — are the raw material memory would start from.
+**It is not** multi-user, and the gap is deliberate: there is **no auth**. Single-tenant by design, the operator is expected to put a reverse proxy with authentication in front of it — see [Security model](#security-model-there-is-no-auth).
 
 Reviewing a run is the half that is hard to do without a tool: what the agent loaded, which sub-agent it delegated to, what it called, what it stopped to ask permission for — and the note you leave on the exact turn that went wrong.
 
@@ -35,6 +30,8 @@ Reviewing a run is the half that is hard to do without a tool: what the agent lo
 Reading every run doesn't scale, so agents can also carry **criteria**: yes/no questions — "did it avoid promising a refund it couldn't confirm?" — that a judge model answers about each recorded run. A fix draft turns into a criterion in one click, checked on the spot against the run it came from. Verdicts the judge is unsure about land in a review queue, your review overrides the judge, and the metrics compare each criterion's pass rate across agent versions, so you can see whether the change you made actually helped. The judge is TypeSafe's Jev — through OpenRouter by default, or straight from TypeSafe or any other host that serves it — which costs a fraction of a cent per run.
 
 Agents can also run on their own: a **schedule** sends one a message every hour, day, weekday, week or month, in your time zone, and each run lands in the same review loop as any other.
+
+And they can remember: give an agent a **memory** — one for all its runs, one per subject the caller names, or one behind a key — and it keeps short entries it reads at the start of every run and edits itself. Every change is versioned and tied to the run that made it, the run page shows what a run read and wrote, and a full memory is consolidated by the agent's model, without losing anything you cannot restore.
 
 One more thing that belongs up here: agentlathe is **built and maintained by one person**, best-effort, with no support channel — read [Project status](#project-status) before you build anything on it.
 
@@ -68,11 +65,12 @@ Seeding is optional. The `migrator` image carries the whole workspace, so run th
 # one example agent, one skill, one HTTP tool
 docker compose run --rm migrator pnpm --filter @agentlathe/db seed
 
-# a fuller topology: 6 agents, 5 skills, 7 HTTP tools, sub-agents, an MCP server
+# a fuller topology: 6 agents, 5 skills, 7 HTTP tools, sub-agents, an MCP server,
+# example memories and two paused schedules
 docker compose run --rm migrator pnpm --filter @agentlathe/db seed:demo
 ```
 
-Both are idempotent — they check for their marker agent (`General assistant` / `General orchestrator`) and do nothing if it exists. There is also `seed:runs`, which fabricates synthetic run metrics so the `/metrics` charts have something to draw; it makes no real model calls and is **not** idempotent.
+Both are idempotent — they check for their marker agent (`General assistant` / `General orchestrator`) and do nothing if it exists, except that `seed:demo` adds the example memories and schedules to a demo seeded before they existed. The schedules are created paused, because every scheduled run calls the model: activate them in **Schedules**. There is also `seed:runs`, which fabricates synthetic run metrics, some with a subject, so the `/metrics` charts have something to draw; it makes no real model calls and is **not** idempotent.
 
 The example tools they create point at a **public echo service** (httpbin.org / httpbingo.org) so the HTTP integration does something visible out of the box. If you chat with a seeded agent, whatever the model sends as tool input goes to a third party — swap those endpoints for your own before using the demo agents for anything real. The seeded model can be overridden with `SEED_MODEL`, which matters if you pointed `PROVIDER_BASE_URL` somewhere that does not serve OpenRouter's catalog — but compose does not forward `SEED_MODEL` from `.env` to the migrator, so pass it explicitly: `docker compose run --rm -e SEED_MODEL=... migrator pnpm --filter @agentlathe/db seed`.
 
@@ -103,7 +101,7 @@ curl http://localhost:3000/v1/chat/completions \
 
 Each active agent is also its own MCP server at `POST /mcp/agents/{agent-id}`, exposing one tool. Point Claude Desktop, Cursor or any MCP client at it.
 
-The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
+The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, run subjects, memory, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 
 ## Documentation
 
@@ -111,7 +109,7 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | The manual: build agents, attach tools, call them, review the runs |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running without Docker, production deployment, reverse proxy, backups |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, evaluation, runner internals |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, memory, evaluation, runner internals |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Scripts, test levels, conventions |
 | [SECURITY.md](SECURITY.md) | Accepted tradeoffs, deferred work, how to report a vulnerability |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and what an upgrade asks of you |
@@ -121,6 +119,8 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 Two things get stored and they are governed separately: the **run** (one row of metadata, no message content) and the **transcript** (the actual messages). The default is that your own experiments are recorded and third-party traffic is not, until you switch it on per agent.
 
 **Transcripts are stored verbatim. There is no redaction.** If a caller sends an API key or a customer's email in a message, that is what lands in your database, in plaintext. Turning on recording for an agent that serves real users is a decision about their data, not just yours.
+
+Agents with memory also keep what they saved, with no TTL and no redaction; anyone who can call the agent picks, with `x-subject-id` or `x-memory-key`, which memory a run reads and writes.
 
 When an agent has criteria, its stored transcripts are also sent to the judge (TypeSafe's Jev, through OpenRouter's Decisions API or the host `JUDGE_URL` names) to be evaluated.
 
@@ -172,12 +172,11 @@ agentlathe has a single maintainer and no review commitments — read [CONTRIBUT
 
 ## Ideas
 
-Where the design is headed, in the order each piece would unlock the next. No dates, no commitment — see [Project status](#project-status).
+Where the design is headed. No dates, no commitment — see [Project status](#project-status).
 
-1. **Replay** — re-run recorded inputs against the current agent version and judge them with the same criteria, to test a change before real traffic does. Today's evaluators only judge runs that already happened.
-2. **Memory** — let an agent carry what it learned across runs, instead of rebuilding context every call.
+- **Replay** — re-run recorded inputs against the current agent version and judge them with the same criteria, to test a change before real traffic does. Today's evaluators only judge runs that already happened.
 
-Orthogonal to that chain: **native provider support**. Single-provider setups already connect directly — `PROVIDER_BASE_URL` + `PROVIDER_API_KEY` point the instance at OpenAI, Anthropic's OpenAI-compatible endpoint, or a local Ollama instead of OpenRouter. What remains is native support where a compatibility layer falls short (Anthropic's Messages API), and graceful handling of `/models` endpoints that lack OpenRouter's metadata (context limits, pricing).
+Alongside it: **native provider support**. Single-provider setups already connect directly — `PROVIDER_BASE_URL` + `PROVIDER_API_KEY` point the instance at OpenAI, Anthropic's OpenAI-compatible endpoint, or a local Ollama instead of OpenRouter. What remains is native support where a compatibility layer falls short (Anthropic's Messages API), and graceful handling of `/models` endpoints that lack OpenRouter's metadata (context limits, pricing).
 
 ## License
 

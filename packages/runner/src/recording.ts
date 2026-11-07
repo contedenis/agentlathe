@@ -2,6 +2,8 @@ import {
   type AgentRunSource,
   getSettings,
   isTrackingEnabled,
+  type MemorySeen,
+  type RunWarning,
   recordAgentRun,
   saveRunTranscript,
 } from "@agentlathe/db";
@@ -14,6 +16,11 @@ import {
   type UIMessage,
 } from "ai";
 import type { AgentRow } from "./loaders";
+import {
+  commitMemoryWrites,
+  type MemoryDraft,
+  type MemoryPartitionRef,
+} from "./memory";
 import type { ToolKind } from "./tools";
 import { resolveAgentVersion } from "./versions";
 
@@ -33,6 +40,9 @@ export type AgentRunStats = {
   approvalsGranted: number;
   calls: AgentRunCallRecord[];
   mcpFailures: string[];
+  warnings: RunWarning[];
+  memorySeen: MemorySeen[];
+  memoryWrites: MemoryDraft[];
 };
 
 export function emptyRunStats(): AgentRunStats {
@@ -45,6 +55,9 @@ export function emptyRunStats(): AgentRunStats {
     approvalsGranted: 0,
     calls: [],
     mcpFailures: [],
+    warnings: [],
+    memorySeen: [],
+    memoryWrites: [],
   };
 }
 
@@ -61,6 +74,18 @@ export function addChildRunStats(
   if (child.outputTokens !== null)
     target.outputTokens = (target.outputTokens ?? 0) + child.outputTokens;
   target.mcpFailures.push(...child.mcpFailures);
+  for (const warning of child.warnings)
+    if (!target.warnings.some((known) => known.message === warning.message))
+      target.warnings.push(warning);
+  for (const seen of child.memorySeen)
+    if (
+      !target.memorySeen.some(
+        (known) =>
+          known.storeId === seen.storeId &&
+          known.partitionKey === seen.partitionKey,
+      )
+    )
+      target.memorySeen.push(seen);
 }
 
 export function describeCall(
@@ -157,7 +182,14 @@ export function createRunStatsCollector(toolKinds: Map<string, ToolKind>) {
       ToolLoopAgentSettings<never, ToolSet>,
       "onToolExecutionEnd" | "onStepEnd"
     >,
-    snapshot: (): AgentRunStats => ({ ...stats, calls: [...stats.calls] }),
+    snapshot: (): AgentRunStats => ({
+      ...stats,
+      calls: [...stats.calls],
+      mcpFailures: [...stats.mcpFailures],
+      warnings: [...stats.warnings],
+      memorySeen: [...stats.memorySeen],
+      memoryWrites: [...stats.memoryWrites],
+    }),
   };
 }
 
@@ -198,8 +230,10 @@ export type RunRecorderOptions = {
   agent: AgentRow;
   source: AgentRunSource;
   threadId?: string | null;
+  subjectId?: string | null;
   scheduleId?: string | null;
   onTranscriptSaved?: (runId: string) => void;
+  onMemoryCommitted?: (partitions: MemoryPartitionRef[]) => void;
 };
 
 export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
@@ -207,8 +241,10 @@ export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
     agent,
     source,
     threadId = null,
+    subjectId = null,
     scheduleId = null,
     onTranscriptSaved,
+    onMemoryCommitted,
   } = run;
   const startedAt = Date.now();
   let recorded: string | null = null;
@@ -226,15 +262,17 @@ export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
   return {
     record: async ({ stats, durationMs, error }) => {
       const elapsedMs = durationMs ?? Date.now() - startedAt;
+      const { memoryWrites = [], ...runStats } = stats ?? {};
       recorded = await recordAgentRun({
         agentId: agent.id,
         agentVersionId: await version,
         source,
         threadId,
+        subjectId,
         scheduleId,
         model: agent.model,
         durationMs: elapsedMs,
-        ...(stats ?? {}),
+        ...runStats,
         status: error ? "error" : "ok",
         error: error
           ? error instanceof Error
@@ -242,6 +280,15 @@ export function createRunRecorder(run: RunRecorderOptions): RunRecorder {
             : String(error)
           : null,
       });
+      if (memoryWrites.length > 0) {
+        const committed = await commitMemoryWrites(memoryWrites, recorded);
+        if (committed.length > 0)
+          try {
+            onMemoryCommitted?.(committed);
+          } catch (err) {
+            console.error("onMemoryCommitted failed", err);
+          }
+      }
       return recorded;
     },
     attachTranscript: async (input, output) => {

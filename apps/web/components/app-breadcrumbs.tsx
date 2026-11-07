@@ -11,6 +11,7 @@ const SECTION_LABELS: Record<string, string> = {
   tools: "Tools",
   skills: "Skills",
   "mcp-servers": "MCP Servers",
+  memory: "Memory",
   schedules: "Schedules",
   metrics: "Metrics",
   runs: "Runs",

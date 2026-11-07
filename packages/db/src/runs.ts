@@ -1,4 +1,4 @@
-import { lt } from "drizzle-orm";
+import { eq, lt, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   DEFAULT_AGENT_RUN_TTL_DAYS,
@@ -14,6 +14,8 @@ import {
   type AgentRunSource,
   agentRunCalls,
   agentRuns,
+  type MemorySeen,
+  type RunWarning,
   runTranscripts,
   settings,
 } from "./schema";
@@ -106,6 +108,7 @@ export type AgentRunRecord = {
   scheduleId?: string | null;
   source: AgentRunSource;
   threadId?: string | null;
+  subjectId?: string | null;
   durationMs: number;
   status?: "ok" | "error";
   model?: string | null;
@@ -116,6 +119,8 @@ export type AgentRunRecord = {
   approvalsRequested?: number;
   approvalsGranted?: number;
   mcpFailures?: string[];
+  warnings?: RunWarning[];
+  memorySeen?: MemorySeen[];
   error?: string | null;
   calls?: AgentRunCall[];
 };
@@ -135,6 +140,8 @@ export async function recordAgentRun(
           ...run,
           durationMs: Math.round(run.durationMs),
           mcpFailures: run.mcpFailures?.length ? run.mcpFailures : null,
+          warnings: run.warnings?.length ? run.warnings : null,
+          memorySeen: run.memorySeen?.length ? run.memorySeen : null,
           error: run.error?.slice(0, 500) ?? null,
         })
         .returning({ id: agentRuns.id });
@@ -185,4 +192,17 @@ export async function deleteExpiredAgentRuns(ttlDays: number): Promise<void> {
   if (ttlDays <= 0) return;
   const cutoff = new Date(Date.now() - ttlDays * 24 * 60 * 60 * 1000);
   await db.delete(agentRuns).where(lt(agentRuns.createdAt, cutoff));
+}
+
+export async function appendRunWarnings(
+  runId: string,
+  warnings: RunWarning[],
+): Promise<void> {
+  if (warnings.length === 0) return;
+  await db
+    .update(agentRuns)
+    .set({
+      warnings: sql`coalesce(${agentRuns.warnings}, '[]'::jsonb) || ${JSON.stringify(warnings)}::jsonb`,
+    })
+    .where(eq(agentRuns.id, runId));
 }

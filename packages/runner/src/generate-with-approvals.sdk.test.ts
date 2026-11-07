@@ -3,6 +3,10 @@ import { MockLanguageModelV4 } from "ai/test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+vi.mock("./memory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./memory")>()),
+  loadMemory: vi.fn(async () => ({ stores: [], seen: [], warnings: [] })),
+}));
 vi.mock("./loaders", () => ({
   loadAgentConfig: vi.fn(),
   loadSkills: vi.fn(async () => []),
@@ -119,6 +123,9 @@ describe("generateWithApprovals against the real SDK", () => {
       approvalsGranted: 0,
       calls: [],
       mcpFailures: [],
+      warnings: [],
+      memorySeen: [],
+      memoryWrites: [],
     };
     vi.mocked(buildTools).mockImplementation(
       async (_agentId, _ctx, _buildSubAgentRuntime, onChildStats) => ({

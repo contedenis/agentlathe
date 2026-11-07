@@ -20,6 +20,7 @@ import {
 const DAYS = Number(process.env.SEED_RUN_DAYS ?? 30);
 const RUNS_PER_DAY = Number(process.env.SEED_RUNS_PER_DAY ?? 9);
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SUBJECTS = ["customer-123", "customer-456", "customer-789"];
 
 type Capability = {
   kind: AgentRunCallKind;
@@ -237,6 +238,8 @@ export async function seedRuns() {
         id: runId,
         agentId: profile.id,
         source,
+        subjectId:
+          source !== "dashboard" && Math.random() < 0.7 ? pick(SUBJECTS) : null,
         status: failed ? "error" : "ok",
         model: profile.model,
         durationMs: duration(profile.baseDurationMs),

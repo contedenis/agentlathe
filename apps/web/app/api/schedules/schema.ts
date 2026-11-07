@@ -1,4 +1,5 @@
 import {
+  RUN_LABEL_MAX_LENGTH,
   SCHEDULE_FREQUENCIES,
   type ScheduleFrequency,
 } from "@agentlathe/db/constants";
@@ -13,6 +14,14 @@ function isTimeZone(value: string) {
   }
 }
 
+const label = z
+  .string()
+  .trim()
+  .max(RUN_LABEL_MAX_LENGTH)
+  .transform((value) => value || null)
+  .nullable()
+  .optional();
+
 const fields = {
   agentId: z.uuid(),
   name: z.string().trim().min(1).max(200),
@@ -24,6 +33,8 @@ const fields = {
   startDate: z.iso.date().nullable().optional(),
   timezone: z.string().refine(isTimeZone, "must be an IANA time zone"),
   input: z.string().trim().min(1).max(20000),
+  subjectId: label,
+  memoryKey: label,
   isActive: z.boolean().optional(),
 };
 

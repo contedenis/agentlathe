@@ -21,6 +21,13 @@ export function agentSlug(name: string): string {
   return cleaned || "agent";
 }
 
+export const RESERVED_TOOL_NAMES = [
+  "load_skill",
+  "memory_add",
+  "memory_update",
+  "memory_delete",
+] as const;
+
 export function httpToolName(name: string): string {
   return slug(name) || "tool";
 }

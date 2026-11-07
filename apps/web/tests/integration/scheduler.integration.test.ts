@@ -171,7 +171,10 @@ describe("scheduler tick against Postgres and a scripted provider (requires Dock
 
   it("runs a due schedule once: a scheduled run with its transcript, and the next occurrence ahead", async () => {
     const agent = await makeAgent("digest agent");
-    const schedule = await makeSchedule(agent.id, { consecutiveFailures: 2 });
+    const schedule = await makeSchedule(agent.id, {
+      consecutiveFailures: 2,
+      subjectId: "team-ops",
+    });
 
     const executions = await runTick();
 
@@ -193,6 +196,7 @@ describe("scheduler tick against Postgres and a scripted provider (requires Dock
     expect(run).toMatchObject({
       source: "schedule",
       scheduleId: schedule.id,
+      subjectId: "team-ops",
       status: "ok",
     });
     const [transcript] = await dbModule.db

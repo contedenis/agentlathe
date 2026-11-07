@@ -4,6 +4,24 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-07
+
+### Added
+
+- **Run subjects.** A run can say who it acted for: send `x-subject-id` on `/v1` or MCP, fill **Act as subject** in the Playground, or give a schedule a subject. The run page shows it and **Runs** filters by it. It is a label the caller picks, not an identity anyone checked.
+- **Memory.** Give an agent one in its configuration: **Agent memory** (one for all its runs), **Agent memory per subject** (one per `x-subject-id`), or **Agent memory with a custom key**, used only when the request sends `x-memory-key` with the value set in the agent. Its entries are added to the end of the agent's instructions on every run, and the agent adds, edits and deletes them itself; changes are saved when the run ends and seen from the next run, or wait for your approval when the memory asks for it. When a memory passes 90% of its limit, the agent's model consolidates it to 60%, keeping pinned entries untouched; what it merged or dropped can be restored from each entry's history. The new **Memory** section edits, pins and restores entries and keeps every change; the run page shows the memory a run loaded and what it changed. A run without the subject or key its memory needs runs without it and says so on the run and the agent page, when that source is recorded. See [USAGE.md](docs/USAGE.md#memory).
+- **Forget subject.** On a per-subject memory, or on **Runs** filtered by a subject, deletes that subject's memory in every agent, the transcripts and fix drafts of its runs, and the schedules that act for it. Its runs stay in metrics, without the subject.
+
+### Security
+
+- `x-subject-id` and `x-memory-key` are labels the caller picks: whoever sends one reads and writes that memory. Before giving memory to an agent that serves people you do not control, have your proxy set `x-subject-id` from the identity it authenticated, and turn on **Require approval** for that memory. What a memory holds reaches the instructions of later runs. Memory has no TTL and no redaction; see [SECURITY.md](SECURITY.md#memory-trusts-the-callers-labels-and-keeps-what-it-is-told).
+
+### Upgrading
+
+- `memory_add`, `memory_update` and `memory_delete` are now tool names of their own. An HTTP or MCP tool of an agent with memory that resolves to one of them is renamed for the model (`memory_add_2`), keeping its approval gate.
+- A migration adds the run subject and the memory tables. The compose `migrator` applies it on `docker compose up --build`; without Docker, run `pnpm --filter @agentlathe/db migrate` before starting the app.
+- Existing agents get no memory until you choose one in their configuration, and runs that send no `x-subject-id` are recorded as before.
+
 ## [0.3.0] - 2026-10-18
 
 ### Added
@@ -63,7 +81,8 @@ What changed in each version of agentlathe, written for the people running an in
 
 First public release: agents defined in Postgres and exposed through an in-app Playground, an OpenAI-compatible `/v1` and one MCP endpoint per agent, with HTTP tools, MCP servers, skills, sub-agents and approval gates. Every call becomes a run you can read and annotate with fix drafts, and `/metrics` covers runs, latency, tokens and cost.
 
-[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/contedenis/agentlathe/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/contedenis/agentlathe/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/contedenis/agentlathe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/contedenis/agentlathe/releases/tag/v0.1.0

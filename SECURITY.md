@@ -12,7 +12,7 @@ MCP server credentials live in the `mcp_servers.auth_config` jsonb column **in p
 
 **But note the caveats:**
 
-- ~~The secret is echoed back to the browser~~ — **resolved**: `auth_config` is write-only from the API's point of view. `GET /api/mcp-servers` and `GET /api/mcp-servers/[id]` (and the RSC queries backing the dashboard) project an explicit column list plus a `hasAuth: boolean` instead of selecting `*`, so the plaintext value never leaves the server. `POST`/`PATCH` still accept `auth_config` in the request body to set it, but their responses use the same safe projection. The edit form shows a "configurado" placeholder instead of the token and only sends a new value when the user types one.
+- ~~The secret is echoed back to the browser~~ — **resolved**: `auth_config` is write-only from the API's point of view. `GET /api/mcp-servers` and `GET /api/mcp-servers/[id]` (and the RSC queries backing the dashboard) project an explicit column list plus a `hasAuth: boolean` instead of selecting `*`, so the plaintext value never leaves the server. `POST`/`PATCH` still accept `authConfig` in the request body to set it, but their responses use the same safe projection. The edit form says the credentials are already set instead of showing them, and only sends a new value when the user types one.
 - **Database dumps/backups** carry live credentials for literal header values; `AGENTLATHE_SECRET_*` references are the exception — the dump carries only the variable name.
 - Secrets must **never be logged** — `auth_config` should be kept out of any log line or error payload.
 
@@ -58,6 +58,20 @@ HTTP tool endpoints and MCP server URLs are provided by the operator and stored 
 **The caveat:** Tool URLs are validated as syntactically valid URLs when written, but not filtered by destination. An operator can configure `http://127.0.0.1:5432/` (Postgres port) and the runner will attempt to POST to it.
 
 **Revisit — add private-range blocking and / or an allowlist — before** expanding access beyond the operator (API keys issued to other users, multi-tenant usage).
+
+## Memory trusts the caller's labels, and keeps what it is told
+
+An agent's [memory](docs/USAGE.md#memory) is picked by two request headers, `x-subject-id` and `x-memory-key`. **Both are labels the caller chooses, not identities anyone checked.** A caller that sends another customer's subject id reads and writes that customer's memory; a caller that knows the custom key gets that memory. The key is a selector, not a secret: it is shown in the agent's configuration and in its versions.
+
+What a memory holds goes into the instructions of later runs. It is framed there as data saved in earlier runs and not as instructions, but a model can still follow text it finds there, so **a memory fed by other people's traffic is a lasting prompt-injection channel**: something one caller gets an agent to save reaches every later run that loads the same memory, and with an agent memory or a custom key that means other callers' runs.
+
+Memory has **no TTL and no redaction**. Entries and every past version stay until someone deletes their memory or its agent: deleting an entry hides it but keeps its history, which can be restored. The agent's tools refuse an entry that looks like a credential, and nothing else is checked: personal data a caller tells the agent can end up in memory. Compaction sends a memory's entries to the agent's own model, through the same provider.
+
+**Forgetting a subject** deletes that subject's memory in every agent, with its history, plus the transcripts and fix drafts of the runs tagged with it, and the schedules acting for it. It finds the subject by its id, not by content: what its runs saved to an agent memory or a custom-key one, what other runs' transcripts say about it, and your database backups all keep it. It is a deletion tool for the data agentlathe filed under that subject, not redaction.
+
+**Is that acceptable?** For your own agents and your own traffic, yes. The labels exist to separate memories, not to protect them from the people who can call the agent.
+
+**Revisit before** giving memory to an agent that serves people you do not control: have your proxy set `x-subject-id` from the identity it authenticated, overwriting whatever the client sent (see [DEPLOYMENT.md](docs/DEPLOYMENT.md#production-deployment)), and turn on **Require approval** on that memory so nothing reaches later runs before a person reads it.
 
 ## Approval gate covers HTTP and MCP tools; sub-agents bypass it
 
