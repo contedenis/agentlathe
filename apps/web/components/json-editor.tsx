@@ -19,7 +19,7 @@ const jsonHighlightStyle = HighlightStyle.define([
   { tag: [tags.brace, tags.squareBracket], color: "var(--foreground)" },
 ]);
 
-const editorTheme = EditorView.theme({
+export const editorTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
     color: "var(--foreground)",
@@ -52,7 +52,7 @@ const editorTheme = EditorView.theme({
   ".cm-diagnostic-error": { borderLeftColor: "var(--destructive)" },
 });
 
-const basicSetup = {
+export const basicSetup = {
   lineNumbers: false,
   foldGutter: false,
   highlightActiveLine: false,

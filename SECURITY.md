@@ -85,9 +85,41 @@ Inside the instance, the original file, its extracted text and its passages are 
 
 **Revisit before** uploading documents you did not write or check, attaching a collection to an agent that serves other people, or uploading anything your provider's data terms do not cover.
 
-## Approval gate covers HTTP and MCP tools; sub-agents bypass it
+## Skill scripts run in a sandbox, and anyone at the dashboard can write one
 
-The `needsApproval` flag exists for HTTP tools and, per agent, for each selected MCP server tool: when set, the runner prompts for approval before executing the tool call (Playground banner, MCP elicitation) or denies it on the headless surfaces (`/v1`, sub-agents, scheduled runs). Sub-agent invocations themselves have no gate — delegation to a sub-agent always proceeds, and everything a sub-agent runs is headless, so its own gated tools are denied rather than executed.
+A [skill](docs/USAGE.md#scripts) can carry JavaScript that an agent runs as a tool, and the skill form's **Test run** runs a script on demand (`POST /api/skills/test-run`). Since the dashboard has no auth, anyone who reaches it can run code on your server, inside the sandbox.
+
+The sandbox is a QuickJS interpreter compiled to WebAssembly, in a worker thread that is started for one run and terminated after it. The script gets no host function at all: no network, no filesystem, no `process`, no environment, no `require`, no timers. What it can do is compute over the input it is given and return a value. It is stopped after two seconds; a script stuck inside one built-in call is stopped a second later, when the worker is killed. Its memory is capped at 64 MB by the WebAssembly instance and its input at 256 KB. What it returns is cut like a tool's result, and what it logs or throws is cut again by the app, because the script can reach the interpreter's own log limit.
+
+**Is that acceptable?** For the current scope, yes: a script can do less than an HTTP tool, which already lets the same person make the server call any URL. What you are trusting is the isolation of QuickJS and WebAssembly, not a review of each script.
+
+**The caveats:** scripts cost load, and the cap on it is per process. Every run can burn up to three seconds of one core and hold up to 64 MB of script memory, plus the worker thread that runs it. Four run at a time in each app process; sixteen more wait and the rest fail at once, so an agent that calls scripts in a loop, or the test endpoint called in a loop, can keep four cores busy and make everyone else's scripts wait or fail, but cannot take more than that. A vulnerability in QuickJS or in the WebAssembly runtime would be a way out of the sandbox; keep the app updated. And a script's source is stored in the agent's versions like a skill's text, with no TTL.
+
+**Revisit — a lower cap, a cap per agent, or scripts off by a setting — if** the dashboard is reachable by people you would not let run code on the machine.
+
+## The builder sends your catalog to its model
+
+The [agent builder](docs/USAGE.md#the-agent-builder) is a model call like an agent's, to the same provider (`PROVIDER_BASE_URL`), with the model set as "Builder model". It is off until that is set, and it only runs when someone opens it and writes to it.
+
+**It sends the catalog.** The ids, names and descriptions of every active HTTP tool (with its input schema and whether it needs approval), skill (and whether it runs a script), knowledge collection (and its size) and agent (and its slug) go to the model, with the ids and names of the MCP servers, and the names and descriptions of an MCP server's tools when it looks them up.
+
+**On one agent, it also sends that agent and the runs it reads.** That is the agent's configuration, including its system prompt, memory purpose and custom memory key; the names and times of its schedules; its criteria with their results; and what it reads to improve the agent: the latest open notes on its runs, the verdicts, the run errors, and the transcript of any run it opens, with its tool calls and results.
+
+**Outside a transcript, it never sends** an HTTP tool's endpoint, any credential or header, a skill's text or script, the prompt of an agent other than the one being worked on, or a document's text. A transcript it opens carries whatever that run's tools returned, cut at 2,000 characters each: a loaded skill's text, knowledge passages, memory entries, API responses.
+
+**It reads and proposes; it never writes.** It has no tool that writes: a proposal reaches the database only when you save the form it was loaded into. It does connect to an MCP server when it lists that server's tools, with the stored credentials, exactly as **Test connection** does.
+
+**Its conversations are not recorded.** There is no run and no transcript on the server, so no trace there of what was sent. The browser tab keeps the conversation, the transcripts it read included, until the tab is closed, and sends it again with every message. For as long as the tab stays open, that copy outlives the transcript's retention and a forgotten subject.
+
+**What it reads is a prompt-injection channel.** Transcripts, notes and descriptions can carry text written to steer the builder, and whoever calls an agent whose traffic you record writes its transcripts. The builder is told to treat all of it as data and cannot save anything, but it can hand you a proposal that attaches a tool, removes an approval or rewrites the prompt. The card names what a proposal changes, including a model that changes and an MCP tool that loses its approval; a memory that stops requiring approval appears only as "memory settings". Read the card, and the form, before saving.
+
+**Is that acceptable?** For your own instance, yes: it is one more path by which what you recorded leaves the instance, next to the judge and memory compaction, to the provider your agents already use.
+
+**Revisit — a builder model on a separate endpoint, or a record of builder conversations — if** transcripts must not reach the provider your agents use, or you need to audit what was asked.
+
+## Approval gate covers tools and skill scripts; sub-agents bypass it
+
+The `needsApproval` flag exists for HTTP tools, for a skill's script and, per agent, for each selected MCP server tool: when set, the runner prompts for approval before executing the tool call (Playground banner, MCP elicitation) or denies it on the headless surfaces (`/v1`, sub-agents, scheduled runs). Sub-agent invocations themselves have no gate — delegation to a sub-agent always proceeds, and everything a sub-agent runs is headless, so its own gated tools are denied rather than executed.
 
 **Is that acceptable?** For the current scope — single tenant, you choose which tools each agent gets — yes. The approval gate is a reminder, not a security boundary; the real control is the operator's choice of which tools to expose.
 
@@ -95,7 +127,7 @@ The `needsApproval` flag exists for HTTP tools and, per agent, for each selected
 
 ## Retention sweep is lazy, and needs a page load or a scheduler
 
-Run and transcript retention is enforced by a lazy sweep that queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). It runs when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, and about every ten minutes while the app's scheduler runs, which it does by default. Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions. Knowledge documents are not swept either: they stay until someone deletes them or their collection.
+Run and transcript retention is enforced by a lazy sweep that queries for expired rows and deletes them according to their TTL (90 days for runs, 14 days for transcripts). It runs when one of the dashboard pages that shows run data (`/runs`, `/metrics`) loads, and about every ten minutes while the app's scheduler runs, which it does by default. Agent versions are not swept at all: each one keeps a snapshot of the agent's configuration (system prompt, skill bodies and scripts, tool schemas) for as long as the agent exists, with MCP auth left out and URLs reduced to scheme and host plus a digest. A secret typed into a system prompt or a skill therefore stays in `agent_versions` after the prompt is edited, and the dashboard shows it: the run page opens the configuration a run used, and the metrics page diffs versions. Knowledge documents are not swept either: they stay until someone deletes them or their collection.
 
 **Is that acceptable?** Yes. A headless instance — one that only receives `/v1` or `/mcp` traffic and never loads the dashboard — is swept by its scheduler.
 

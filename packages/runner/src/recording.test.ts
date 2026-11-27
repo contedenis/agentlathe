@@ -17,10 +17,31 @@ import {
   addChildRunStats,
   createRunRecorder,
   createRunStatsCollector,
+  describeCall,
   emptyRunStats,
 } from "./recording";
 import type { ToolKind } from "./tools";
 import { resolveAgentVersion } from "./versions";
+
+describe("describeCall", () => {
+  const kinds = new Map<string, ToolKind>([
+    ["load_skill", "skill"],
+    ["skill_Date_math", "skill"],
+  ]);
+
+  it("records a loaded skill under the skill's name", () => {
+    expect(describeCall("load_skill", { name: "Date math" }, kinds)).toEqual({
+      kind: "skill",
+      name: "Date math",
+    });
+  });
+
+  it("records a skill's script under its tool name, whatever its input holds", () => {
+    expect(
+      describeCall("skill_Date_math", { name: "not a skill" }, kinds),
+    ).toEqual({ kind: "skill", name: "skill_Date_math" });
+  });
+});
 
 const toolKinds = new Map<string, ToolKind>([
   ["fetch_data", "tool"],
@@ -225,6 +246,7 @@ describe("createRunRecorder — the single writer of the run record", () => {
       agentRunTtlDays: 90,
       transcriptTtlDays: 14,
       judgeModel: "typesafe/jev-1.13",
+      builderModel: null,
     });
   });
 

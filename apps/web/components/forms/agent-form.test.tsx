@@ -96,6 +96,44 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("AgentForm draft", () => {
+  it("starts a new agent from a draft and still creates it, with the draft's slug kept", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
+
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+        draft={{
+          name: "Refund desk",
+          slug: "refunds",
+          description: "Answers refund questions.",
+          model: "vendor/model-a",
+          systemPrompt: "You answer refund questions.",
+          maxSteps: 12,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("Refund desk");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const [url, init] = vi.mocked(apiRequest).mock.calls[0];
+    expect(url).toBe("/api/agents");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      name: "Refund desk",
+      slug: "refunds",
+      model: "vendor/model-a",
+      systemPrompt: "You answer refund questions.",
+      maxSteps: 12,
+    });
+  });
+});
+
 describe("AgentForm", () => {
   it("submits the create payload with tools, sub-agents and mcp tool selections wired", async () => {
     const user = userEvent.setup();

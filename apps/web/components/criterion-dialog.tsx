@@ -62,16 +62,27 @@ export type CriterionPrefill = {
   sourceFixDraftId: string;
 };
 
+export type CriterionDraft = {
+  question: string;
+  passDescription?: string | null;
+  failDescription?: string | null;
+  appliesWhen?: string | null;
+};
+
 function initialValues(
   criterion: AgentCriterion | null | undefined,
   prefill: CriterionPrefill | null | undefined,
+  draft: CriterionDraft | null | undefined,
 ): Values {
   return {
-    question: criterion?.question ?? "",
-    passDescription: criterion?.passDescription ?? "",
+    question: criterion?.question ?? draft?.question ?? "",
+    passDescription: criterion?.passDescription ?? draft?.passDescription ?? "",
     failDescription:
-      criterion?.failDescription ?? prefill?.failDescription ?? "",
-    appliesWhen: criterion?.appliesWhen ?? "",
+      criterion?.failDescription ??
+      prefill?.failDescription ??
+      draft?.failDescription ??
+      "",
+    appliesWhen: criterion?.appliesWhen ?? draft?.appliesWhen ?? "",
     failBelow: String(criterion?.failBelow ?? DEFAULT_CRITERION_FAIL_BELOW),
     passAbove: String(criterion?.passAbove ?? DEFAULT_CRITERION_PASS_ABOVE),
   };
@@ -179,6 +190,7 @@ function CriterionForm({
   agentId,
   criterion,
   prefill,
+  draft,
   previewRunId,
   questionRef,
   onOpenChange,
@@ -186,14 +198,17 @@ function CriterionForm({
   agentId: string;
   criterion: AgentCriterion | null | undefined;
   prefill: CriterionPrefill | null | undefined;
+  draft?: CriterionDraft | null;
   previewRunId: string | null;
   questionRef: RefObject<HTMLTextAreaElement | null>;
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [values, setValues] = useState(() => initialValues(criterion, prefill));
+  const [values, setValues] = useState(() =>
+    initialValues(criterion, prefill, draft),
+  );
   const [showApplies, setShowApplies] = useState(
-    Boolean(criterion?.appliesWhen),
+    Boolean(criterion?.appliesWhen ?? draft?.appliesWhen),
   );
   const [advancedOpen] = useState(
     () =>
@@ -434,6 +449,7 @@ export function CriterionDialog({
   onOpenChange,
   criterion,
   prefill,
+  draft,
   previewRunId,
 }: {
   agentId: string;
@@ -441,6 +457,7 @@ export function CriterionDialog({
   onOpenChange: (open: boolean) => void;
   criterion?: AgentCriterion | null;
   prefill?: CriterionPrefill | null;
+  draft?: CriterionDraft | null;
   previewRunId?: string | null;
 }) {
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -451,10 +468,16 @@ export function CriterionDialog({
         className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
       >
         <CriterionForm
-          key={criterion?.id ?? prefill?.sourceFixDraftId ?? "new"}
+          key={
+            criterion?.id ??
+            prefill?.sourceFixDraftId ??
+            draft?.question ??
+            "new"
+          }
           agentId={agentId}
           criterion={criterion}
           prefill={prefill}
+          draft={draft}
           previewRunId={previewRunId ?? criterion?.sourceRunId ?? null}
           questionRef={questionRef}
           onOpenChange={onOpenChange}

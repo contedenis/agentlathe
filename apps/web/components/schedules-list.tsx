@@ -8,6 +8,7 @@ import { DeleteResourceButton } from "@/components/delete-resource-button";
 import { EmptyState } from "@/components/empty-state";
 import {
   type ScheduleAgentOption,
+  type ScheduleDraft,
   ScheduleForm,
   type ScheduleFormValues,
 } from "@/components/forms/schedule-form";
@@ -49,11 +50,13 @@ export function ScheduleSheet({
   open,
   onOpenChange,
   initial,
+  draft,
   agents,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initial?: ScheduleFormValues;
+  draft?: ScheduleDraft;
   agents: ScheduleAgentOption[];
 }) {
   const router = useRouter();
@@ -66,6 +69,7 @@ export function ScheduleSheet({
         {open && (
           <ScheduleForm
             initial={initial}
+            draft={draft}
             agents={agents}
             onSuccess={() => {
               onOpenChange(false);

@@ -23,7 +23,29 @@ const settings: AppSettings = {
   agentRunTtlDays: 30,
   transcriptTtlDays: 7,
   judgeModel: "typesafe/jev-1.13",
+  builderModel: null,
 };
+
+describe("TrackingToggles builder model", () => {
+  it("saves the trimmed model on blur, and null when it is cleared", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiRequest).mockResolvedValue(undefined);
+    render(<TrackingToggles initial={settings} judgeHost="openrouter.ai" />);
+    const input = screen.getByLabelText("Builder model");
+
+    await user.type(input, "  vendor/model-a ");
+    await user.tab();
+    await user.clear(input);
+    await user.tab();
+
+    expect(
+      vi.mocked(apiRequest).mock.calls.map(([, init]) => init?.body),
+    ).toEqual([
+      JSON.stringify({ builderModel: "vendor/model-a" }),
+      JSON.stringify({ builderModel: null }),
+    ]);
+  });
+});
 
 describe("TrackingToggles judge model", () => {
   it("shows the current judge model and the host that serves it", () => {

@@ -292,6 +292,13 @@ export function VersionConfigDialog({
                 <Item label="Content">
                   <Text>{skill.content}</Text>
                 </Item>
+                {skill.script && (
+                  <Item
+                    label={skill.needsApproval ? "Script · approval" : "Script"}
+                  >
+                    <Text>{skill.script}</Text>
+                  </Item>
+                )}
               </Card>
             ))}
           </Section>

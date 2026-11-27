@@ -7,6 +7,7 @@ import {
   capToolName,
   httpToolName,
   mcpToolName,
+  skillToolName,
   slug,
   subAgentToolName,
   TOOL_NAME_MAX_LENGTH,
@@ -138,6 +139,17 @@ describe("subAgentToolName", () => {
 
   it("slugs a dot out of an agent slug", () => {
     expect(subAgentToolName("agent.v2")).toBe("subagent_agent_v2");
+  });
+});
+
+describe("skillToolName", () => {
+  it("prefixes the slugged skill name", () => {
+    expect(skillToolName("Date math")).toBe("skill_Date_math");
+  });
+
+  it("stays a valid tool name for a skill named with symbols only, and within the limit", () => {
+    expect(skillToolName("!!!")).toBe("skill_script");
+    expect(skillToolName("a".repeat(80))).toHaveLength(TOOL_NAME_MAX_LENGTH);
   });
 });
 

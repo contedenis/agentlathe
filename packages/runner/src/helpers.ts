@@ -1,8 +1,10 @@
 import {
+  CHARS_PER_TOKEN,
   capToolName,
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_EMBEDDING_MODEL,
   SECRET_ENV_PREFIX,
+  TOOL_RESULT_CONTEXT_SHARE,
 } from "@agentlathe/db";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ToolSet } from "ai";
@@ -133,6 +135,15 @@ export function __resetContextLimitCache(): void {
 
 export function estimateTokens(messages: unknown): number {
   return Math.ceil(JSON.stringify(messages).length / 4);
+}
+
+export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+export function toolResultLimit(contextLimit: number): number {
+  return Math.min(
+    Math.floor(contextLimit * TOOL_RESULT_CONTEXT_SHARE) * CHARS_PER_TOKEN,
+    MAX_RESPONSE_BYTES,
+  );
 }
 
 export function addTool(

@@ -94,7 +94,8 @@ export function describeCall(
   toolKinds: Map<string, ToolKind>,
 ): { kind: ToolKind; name: string } {
   const kind = toolKinds.get(toolName) ?? "tool";
-  if (kind !== "skill") return { kind, name: toolName };
+  if (kind !== "skill" || toolName !== "load_skill")
+    return { kind, name: toolName };
   const skillName = (input as { name?: unknown } | undefined)?.name;
   return {
     kind: "skill",

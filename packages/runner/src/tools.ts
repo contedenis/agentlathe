@@ -7,10 +7,6 @@ import {
   tools,
 } from "@agentlathe/db";
 import {
-  CHARS_PER_TOKEN,
-  TOOL_RESULT_CONTEXT_SHARE,
-} from "@agentlathe/db/constants";
-import {
   createMCPClient,
   type ListToolsResult,
   type MCPClient,
@@ -20,7 +16,14 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { type ApprovalStrategy, buildHeadlessToolApproval } from "./approval";
 import { MAX_DEPTH, type RuntimeCtx } from "./context";
-import { addTool, addToolWithApproval, buildAuth, runTimeout } from "./helpers";
+import {
+  addTool,
+  addToolWithApproval,
+  buildAuth,
+  MAX_RESPONSE_BYTES,
+  runTimeout,
+  toolResultLimit,
+} from "./helpers";
 import { compileInputSchema, describeSchemaErrors } from "./input-schema";
 import { loadMcpServers, loadSubAgents, type McpServerGroup } from "./loaders";
 import type { AgentRunStats } from "./recording";
@@ -33,15 +36,7 @@ export type ToolKind =
   | "memory"
   | "knowledge";
 
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TRUNCATION_SUFFIX = "[truncated]";
-
-function toolResultLimit(contextLimit: number): number {
-  return Math.min(
-    Math.floor(contextLimit * TOOL_RESULT_CONTEXT_SHARE) * CHARS_PER_TOKEN,
-    MAX_RESPONSE_BYTES,
-  );
-}
 const HTTP_TOOL_TIMEOUT_MS = 30_000;
 
 async function readCappedText(

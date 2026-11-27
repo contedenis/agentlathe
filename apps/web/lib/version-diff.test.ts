@@ -148,6 +148,33 @@ describe("diffVersions — what changed between two agent versions", () => {
     expect(changes.summary).toBe("+1 skill · 1 skill edited · −1 tool");
   });
 
+  it("reports a script a skill gained, and reads a version stored before skills had scripts", () => {
+    const changes = diffVersions(
+      base,
+      edit({
+        skills: [
+          {
+            name: "Support tone",
+            description: "How to talk",
+            content: "Be kind.",
+            script: "return 1;",
+            inputSchema: null,
+            needsApproval: true,
+          },
+        ],
+      }),
+    );
+
+    const edited = changes.entities.find((e) => e.name === "Support tone");
+    expect(edited?.fields.map((field) => field.label)).toEqual([
+      "Script",
+      "Script input schema",
+      "Script approval",
+    ]);
+    expect(edited?.fields[2]).toMatchObject({ from: "", to: "required" });
+    expect(diffVersions(base, base).entities).toEqual([]);
+  });
+
   it("shows every field of an added entity against nothing", () => {
     const changes = diffVersions(edit({ httpTools: [] }), base);
     const [added] = changes.entities;

@@ -43,6 +43,13 @@
       "when": 1794086622016,
       "tag": "0005_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795780367136,
+      "tag": "0006_skill_scripts_builder",
+      "breakpoints": true
     }
   ]
 }

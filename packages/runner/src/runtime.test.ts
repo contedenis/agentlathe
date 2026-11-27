@@ -36,6 +36,7 @@ vi.mock("./loaders", () => ({
   loadSkills: vi.fn(async () => []),
 }));
 vi.mock("./tools", () => ({ buildTools: vi.fn() }));
+vi.mock("./sandbox", () => ({ runScript: vi.fn() }));
 
 import {
   createAgentUIStream,
@@ -54,6 +55,7 @@ import {
   buildPrepareStep,
   buildSystemPrompt,
 } from "./runtime";
+import { runScript } from "./sandbox";
 import { streamAgentForUI } from "./stream-ui";
 import { buildTools } from "./tools";
 
@@ -384,6 +386,124 @@ describe("buildAgentRuntime — load_skill is reserved", () => {
     expect(tools.load_skill).not.toBe(marker);
     expect(tools.load_skill_2).toBe(marker);
     warn.mockRestore();
+  });
+});
+
+describe("buildAgentRuntime — a skill with a script is a tool of its own", () => {
+  const scripted = (overrides: Partial<SkillRow> = {}): SkillRow => ({
+    id: "s1",
+    name: "Date math",
+    description: "Adds days to a date.",
+    content: "Call the script with a date and a number of days.",
+    script: "return input.days + 1;",
+    inputSchema: {
+      type: "object",
+      properties: { days: { type: "number" } },
+      required: ["days"],
+    },
+    needsApproval: false,
+    ...overrides,
+  });
+  const built = async (
+    skill: SkillRow,
+    existing: Record<string, Tool> = {},
+  ) => {
+    vi.mocked(getContextLimit).mockResolvedValue(1000);
+    vi.mocked(loadSkills).mockResolvedValue([skill]);
+    vi.mocked(buildTools).mockResolvedValue({
+      tools: existing,
+      approvalToolNames: new Set<string>(),
+      toolKinds: new Map(Object.keys(existing).map((name) => [name, "tool"])),
+      mcpFailures: [],
+      cleanup: async () => {},
+    });
+    const runtime = await buildAgentRuntime(agentRow, {
+      buildApproval: buildDashboardToolApproval,
+    });
+    const config = (
+      runtime.agent as unknown as {
+        config: {
+          instructions: string;
+          tools: Record<
+            string,
+            {
+              execute: (input: unknown, options: unknown) => Promise<unknown>;
+              inputSchema: {
+                validate: (value: unknown) => Promise<{ success: boolean }>;
+              };
+            }
+          >;
+          toolApproval: (options: {
+            toolCall: { toolName: string };
+          }) => unknown;
+        };
+      }
+    ).config;
+    return { ...runtime, config };
+  };
+
+  it("runs the script through the sandbox with the result limit of the model, and says so in the prompt", async () => {
+    vi.mocked(runScript).mockResolvedValue({ result: 3 });
+    const { config, toolKinds } = await built(scripted());
+    const abortSignal = new AbortController().signal;
+
+    const output = await config.tools.skill_Date_math.execute(
+      { days: 2 },
+      { abortSignal },
+    );
+
+    expect(output).toEqual({ result: 3 });
+    expect(runScript).toHaveBeenCalledWith({
+      script: "return input.days + 1;",
+      input: { days: 2 },
+      resultLimit: 1000,
+      abortSignal,
+    });
+    expect(toolKinds.get("skill_Date_math")).toBe("skill");
+    expect(config.instructions).toContain(
+      "- Date math: Adds days to a date. Its script runs as the `skill_Date_math` tool.",
+    );
+    expect(config.tools.load_skill).toBeDefined();
+  });
+
+  it("rejects an input that does not match the skill's schema", async () => {
+    const { config } = await built(scripted());
+
+    const verdict = await config.tools.skill_Date_math.inputSchema.validate({
+      days: "two",
+    });
+
+    expect(verdict.success).toBe(false);
+  });
+
+  it("asks for approval only when the skill requires it, under the name a collision left it with", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const taken = { __marker: true } as unknown as Tool;
+    const open = await built(scripted());
+    const gated = await built(scripted({ needsApproval: true }), {
+      skill_Date_math: taken,
+    });
+
+    expect(
+      open.config.toolApproval({ toolCall: { toolName: "skill_Date_math" } }),
+    ).toBe("not-applicable");
+    expect(gated.config.tools.skill_Date_math).toBe(taken);
+    expect(
+      gated.config.toolApproval({
+        toolCall: { toolName: "skill_Date_math_2" },
+      }),
+    ).toBe("user-approval");
+    expect(
+      gated.config.toolApproval({ toolCall: { toolName: "skill_Date_math" } }),
+    ).toBe("not-applicable");
+    warn.mockRestore();
+  });
+
+  it("a skill without a script adds no tool", async () => {
+    const { config } = await built(scripted({ script: null }));
+
+    expect(Object.keys(config.tools)).toEqual(["load_skill"]);
+    expect(config.instructions).not.toContain("Its script runs");
   });
 });
 

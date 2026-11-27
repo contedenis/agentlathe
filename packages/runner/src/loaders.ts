@@ -22,6 +22,9 @@ export type SkillRow = {
   name: string;
   description: string;
   content: string;
+  script?: string | null;
+  inputSchema?: unknown;
+  needsApproval?: boolean;
 };
 
 export type SubAgentRow = {
@@ -80,6 +83,9 @@ export async function loadSkills(agentId: string): Promise<SkillRow[]> {
       name: skills.name,
       description: skills.description,
       content: skills.content,
+      script: skills.script,
+      inputSchema: skills.inputSchema,
+      needsApproval: skills.needsApproval,
     })
     .from(agentSkills)
     .innerJoin(skills, eq(agentSkills.skillId, skills.id))

@@ -480,6 +480,45 @@ describe("CRUD routes (requires Docker)", () => {
       expect(deleteRes.status).toBe(204);
     });
 
+    it("stores a script with its input schema and approval, refuses a broken schema, and drops the script on null", async () => {
+      const skill = {
+        name: "scripted skill",
+        description: "adds",
+        content: "use the script",
+        script: "return input.a + input.b;",
+      };
+      const createRes = await skillsRoute.POST(
+        jsonRequest("http://test/api/skills", "POST", {
+          ...skill,
+          inputSchema: { type: "object", required: ["a", "b"] },
+          needsApproval: true,
+        }),
+      );
+      expect(createRes.status).toBe(201);
+      const created = await createRes.json();
+      expect(created).toMatchObject({
+        script: "return input.a + input.b;",
+        inputSchema: { type: "object", required: ["a", "b"] },
+        needsApproval: true,
+      });
+
+      const brokenRes = await skillsRoute.POST(
+        jsonRequest("http://test/api/skills", "POST", {
+          ...skill,
+          inputSchema: { type: "not-a-type" },
+        }),
+      );
+      expect(brokenRes.status).toBe(400);
+
+      const patchRes = await skillRoute.PATCH(
+        jsonRequest(`http://test/api/skills/${created.id}`, "PATCH", {
+          script: null,
+        }),
+        withParams(created.id),
+      );
+      expect((await patchRes.json()).script).toBeNull();
+    });
+
     it("POST with a missing required field returns 400", async () => {
       const res = await skillsRoute.POST(
         jsonRequest("http://test/api/skills", "POST", {
@@ -817,6 +856,7 @@ describe("CRUD routes (requires Docker)", () => {
         agentRunTtlDays: 90,
         transcriptTtlDays: 14,
         judgeModel: "typesafe/jev-1.13",
+        builderModel: null,
       });
     });
 

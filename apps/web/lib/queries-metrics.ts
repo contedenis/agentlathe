@@ -16,6 +16,7 @@ import {
   mcpToolName,
   runEvaluations,
   skills,
+  skillToolName,
   subAgentToolName,
   tools,
 } from "@agentlathe/db";
@@ -52,7 +53,11 @@ async function configuredCapabilities(): Promise<ConfiguredCapability[]> {
       .from(agentTools)
       .innerJoin(tools, eq(agentTools.toolId, tools.id)),
     db
-      .select({ agentId: agentSkills.agentId, name: skills.name })
+      .select({
+        agentId: agentSkills.agentId,
+        name: skills.name,
+        hasScript: sql<boolean>`${skills.script} is not null`,
+      })
       .from(agentSkills)
       .innerJoin(skills, eq(agentSkills.skillId, skills.id)),
     db
@@ -86,6 +91,14 @@ async function configuredCapabilities(): Promise<ConfiguredCapability[]> {
       name: row.name,
       displayName: row.name,
     })),
+    ...skillRows
+      .filter((row) => row.hasScript)
+      .map((row) => ({
+        agentId: row.agentId,
+        kind: "skill",
+        name: skillToolName(row.name),
+        displayName: `${row.name} (script)`,
+      })),
     ...mcpRows.map((row) => ({
       agentId: row.agentId,
       kind: "mcp",

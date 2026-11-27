@@ -55,7 +55,7 @@ const SystemPromptCanvas = dynamic(
   },
 );
 
-type AgentFormValues = {
+export type AgentFormValues = {
   id: string;
   name: string;
   slug: string;
@@ -79,42 +79,47 @@ export function AgentForm({
   models,
   contextFallback,
   initial,
+  draft,
+  onSaved,
 }: {
   catalogs: ToolPickerCatalogs;
   collections: KnowledgeCatalogItem[];
   models: ModelOption[];
   contextFallback: number;
   initial?: AgentFormValues;
+  draft?: Partial<Omit<AgentFormValues, "id">>;
+  onSaved?: () => void;
 }) {
   const router = useRouter();
   const mode = initial ? "edit" : "create";
+  const start = { ...initial, ...draft };
 
-  const [name, setName] = useState(initial?.name ?? "");
-  const [slug, setSlug] = useState(initial?.slug ?? "");
-  const [slugTouched, setSlugTouched] = useState(mode === "edit");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [model, setModel] = useState(initial?.model ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
-  const [maxSteps, setMaxSteps] = useState(String(initial?.maxSteps ?? 20));
+  const [name, setName] = useState(start.name ?? "");
+  const [slug, setSlug] = useState(start.slug ?? "");
+  const [slugTouched, setSlugTouched] = useState(
+    mode === "edit" || Boolean(draft?.slug),
+  );
+  const [description, setDescription] = useState(start.description ?? "");
+  const [model, setModel] = useState(start.model ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(start.systemPrompt ?? "");
+  const [maxSteps, setMaxSteps] = useState(String(start.maxSteps ?? 20));
   const [recordTraffic, setRecordTraffic] = useState(
-    initial?.recordTraffic ?? false,
+    start.recordTraffic ?? false,
   );
-  const [autoEvaluate, setAutoEvaluate] = useState(
-    initial?.autoEvaluate ?? true,
-  );
-  const [skillIds, setSkillIds] = useState<string[]>(initial?.skillIds ?? []);
-  const [toolIds, setToolIds] = useState<string[]>(initial?.toolIds ?? []);
+  const [autoEvaluate, setAutoEvaluate] = useState(start.autoEvaluate ?? true);
+  const [skillIds, setSkillIds] = useState<string[]>(start.skillIds ?? []);
+  const [toolIds, setToolIds] = useState<string[]>(start.toolIds ?? []);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(
-    initial?.subAgentIds ?? [],
+    start.subAgentIds ?? [],
   );
   const [mcpTools, setMcpTools] = useState<McpToolSelection[]>(
-    initial?.mcpTools ?? [],
+    start.mcpTools ?? [],
   );
   const [memory, setMemory] = useState<AgentMemoryConfig>(
-    initial?.memory ?? EMPTY_MEMORY_CONFIG,
+    start.memory ?? EMPTY_MEMORY_CONFIG,
   );
   const [knowledge, setKnowledge] = useState<KnowledgeLink[]>(
-    initial?.knowledge ?? [],
+    start.knowledge ?? [],
   );
   const contextLength =
     models.find((option) => option.id === model)?.contextLength ??
@@ -189,6 +194,7 @@ export function AgentForm({
           body: JSON.stringify(body),
         });
         toast.success("Agent updated.");
+        onSaved?.();
         router.push(`/agents/${initial?.id}`);
       }
     } catch (err) {

@@ -149,6 +149,19 @@ const lines = (values: string[]) => values.join("\n");
 const SKILL_FIELDS: FieldSpec<Skill>[] = [
   { label: "Description", kind: "text", read: (s) => asString(s.description) },
   { label: "Content", kind: "text", read: (s) => asString(s.content) },
+  { label: "Script", kind: "text", read: (s) => asString(s.script) },
+  {
+    label: "Script input schema",
+    kind: "text",
+    read: (s) =>
+      s.script ? JSON.stringify(s.inputSchema ?? null, null, 2) : "",
+  },
+  {
+    label: "Script approval",
+    kind: "value",
+    read: (s) =>
+      s.script ? (s.needsApproval ? "required" : "not required") : "",
+  },
 ];
 
 const TOOL_FIELDS: FieldSpec<HttpTool>[] = [

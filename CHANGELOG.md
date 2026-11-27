@@ -4,6 +4,28 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-27
+
+### Added
+
+- **Agent builder.** **New agent** has a **Describe it to the builder** button. Say what the agent is for and the builder, which knows what this instance has and which models your provider serves, proposes a configuration: model, system prompt, what to attach and why, and what the agent would need that the instance does not have yet. **Load into form** puts the proposal in the agent form for you to review and save; the builder never saves anything. See [USAGE.md](docs/USAGE.md#the-agent-builder).
+- **Improve with builder.** An agent's page has **Improve with builder**. There the builder reads the open notes on that agent's runs, the verdicts where a run failed a criterion or the judge was unsure, and the runs themselves, and looks for the cause they share. Its proposal says what differs from the saved configuration and how many open notes it answers, and loads into the edit form. After you save, it offers to mark those notes applied.
+- **Skill scripts.** A skill can carry a JavaScript script besides its text, for what models get wrong on their own: arithmetic, dates, parsing and validating data. The agent gets it as a tool of its own, named after the skill, with an optional JSON Schema for its input; the script receives that input and returns a JSON value. The skill form runs the script against a test input before you save it, and a script can require approval before running, like a tool. A script's runs show on the run page and as a row of their own on the metrics page, apart from the loads of the skill's text, and editing a script creates a new agent version. See [USAGE.md](docs/USAGE.md#scripts).
+- The builder also proposes what is missing: a new skill, with a script when the job is computing; a schedule for an agent; and evaluation criteria, such as one that would catch a problem it just fixed. Each opens in its own form.
+
+### Security
+
+- The builder sends its model, at the same provider your agents use, the names and descriptions of this instance's active HTTP tools (with their input schemas and whether they need approval), skills, knowledge collections and agents, the names of its MCP servers, and the tools of a server it looks up. When it works on an agent it also sends that agent's configuration, system prompt and memory key included, its schedules and criteria, and the notes, verdicts, run errors and transcripts it reads. Outside those transcripts, which carry whatever the run's tools returned, it never sends an endpoint, a credential, a skill's text or script, or another agent's prompt. Its conversations are not recorded on the server: no run, no transcript, no cost on the metrics page. The browser tab keeps them until it is closed.
+- What the builder reads can carry text written to steer it. It cannot save anything, and the card of a proposal names what it changes, so read it before saving. See [SECURITY.md](SECURITY.md#the-builder-sends-your-catalog-to-its-model).
+- A skill's script runs in a sandbox inside the app process: no network, no files, no environment variables and no packages, two seconds and 64 MB at most, and a result cut at the same limit as a tool's. Four run at a time per process; sixteen more wait their turn and any beyond that fail at once. Anyone who reaches the dashboard can write and run a script in that sandbox, and a script is stored in the agent's versions like the skill's text. See [SECURITY.md](SECURITY.md#skill-scripts-run-in-a-sandbox-and-anyone-at-the-dashboard-can-write-one).
+
+### Upgrading
+
+- A migration adds the script columns to skills and the builder model setting. The compose `migrator` applies it on `docker compose up --build`; without Docker, run `pnpm --filter @agentlathe/db migrate` before starting the app. The dependencies changed too: without Docker, run `pnpm install` first.
+- The builder is off until you set "Builder model" under **Settings** to a model your provider serves. Pick a capable one: it writes system prompts. Its calls are billed by your provider like any other. Setting it is also what lets the catalog, and the notes, verdicts and transcripts of an agent you improve, be sent to that provider.
+- Existing skills are unchanged: a skill has no script until you write one.
+- Scripts run inside the app process, each in a short-lived worker thread: up to three seconds of one core and 64 MB per run, four at a time per process. Leave the container room for it if your agents use them.
+
 ## [0.6.0] - 2026-11-27
 
 ### Added
@@ -150,7 +172,8 @@ What changed in each version of agentlathe, written for the people running an in
 
 First public release: agents defined in Postgres and exposed through an in-app Playground, an OpenAI-compatible `/v1` and one MCP endpoint per agent, with HTTP tools, MCP servers, skills, sub-agents and approval gates. Every call becomes a run you can read and annotate with fix drafts, and `/metrics` covers runs, latency, tokens and cost.
 
-[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/contedenis/agentlathe/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/contedenis/agentlathe/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/contedenis/agentlathe/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/contedenis/agentlathe/compare/v0.3.0...v0.4.0

@@ -90,6 +90,13 @@ export function agentConfigSnapshot(config: AgentConfig) {
         name: skill.name,
         description: skill.description,
         content: skill.content,
+        ...(skill.script
+          ? {
+              script: skill.script,
+              inputSchema: skill.inputSchema ?? null,
+              needsApproval: skill.needsApproval,
+            }
+          : {}),
       })),
     ),
     httpTools: sortCanonical(

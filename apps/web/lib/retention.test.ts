@@ -22,6 +22,7 @@ const settings: AppSettings = {
   agentRunTtlDays: 90,
   transcriptTtlDays: 14,
   judgeModel: "typesafe/jev-1.13",
+  builderModel: null,
 };
 
 describe("scheduleRetentionSweep", () => {

@@ -1,6 +1,7 @@
+import { getSettings } from "@agentlathe/db";
 import { fallbackContextLimit } from "@agentlathe/runner";
 import { notFound } from "next/navigation";
-import { AgentForm } from "@/components/forms/agent-form";
+import { AgentFormWithBuilder } from "@/components/forms/agent-form-with-builder";
 import { PageHeader } from "@/components/page-header";
 import { memoryConfigOf } from "@/lib/memory-settings";
 import { getOpenRouterModels } from "@/lib/openrouter-models";
@@ -12,18 +13,23 @@ import {
 
 export default async function EditAgentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ builder?: string }>;
 }) {
   const { id } = await params;
+  const { builder } = await searchParams;
 
-  const [agent, catalogs, collections, knowledge, models] = await Promise.all([
-    getAgentDetail(id),
-    getAgentFormCatalogs(id),
-    listCollectionOptions(),
-    listAgentKnowledge(id),
-    getOpenRouterModels(),
-  ]);
+  const [agent, catalogs, collections, knowledge, models, settings] =
+    await Promise.all([
+      getAgentDetail(id),
+      getAgentFormCatalogs(id),
+      listCollectionOptions(),
+      listAgentKnowledge(id),
+      getOpenRouterModels(),
+      getSettings(),
+    ]);
   if (!agent) notFound();
 
   return (
@@ -33,7 +39,9 @@ export default async function EditAgentPage({
         title={`Edit ${agent.name}`}
         description={agent.description ?? undefined}
       />
-      <AgentForm
+      <AgentFormWithBuilder
+        builderConfigured={Boolean(settings.builderModel)}
+        startOpen={builder !== undefined}
         catalogs={catalogs}
         collections={collections}
         models={models}

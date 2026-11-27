@@ -31,6 +31,7 @@ export type AppSettings = TrackingFlags & {
   agentRunTtlDays: number;
   transcriptTtlDays: number;
   judgeModel: string;
+  builderModel: string | null;
 };
 
 const TRACK_COLUMN = {
@@ -55,6 +56,7 @@ const DEFAULTS: AppSettings = {
   agentRunTtlDays: DEFAULT_AGENT_RUN_TTL_DAYS,
   transcriptTtlDays: DEFAULT_TRANSCRIPT_TTL_DAYS,
   judgeModel: DEFAULT_JUDGE_MODEL,
+  builderModel: null,
 };
 
 export async function getSettings(): Promise<AppSettings> {
@@ -67,6 +69,7 @@ export async function getSettings(): Promise<AppSettings> {
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
       judgeModel: settings.judgeModel,
+      builderModel: settings.builderModel,
     })
     .from(settings)
     .limit(1);
@@ -91,6 +94,7 @@ export async function setSettings(
       agentRunTtlDays: settings.agentRunTtlDays,
       transcriptTtlDays: settings.transcriptTtlDays,
       judgeModel: settings.judgeModel,
+      builderModel: settings.builderModel,
     });
   return row;
 }

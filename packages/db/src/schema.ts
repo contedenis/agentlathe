@@ -80,6 +80,9 @@ export const skills = pgTable("skills", {
   name: text("name").notNull(),
   description: text("description").notNull(),
   content: text("content").notNull(),
+  script: text("script"),
+  inputSchema: jsonb("input_schema"),
+  needsApproval: boolean("needs_approval").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -268,6 +271,7 @@ export const settings = pgTable(
       .notNull()
       .default(DEFAULT_TRANSCRIPT_TTL_DAYS),
     judgeModel: text("judge_model").notNull().default(DEFAULT_JUDGE_MODEL),
+    builderModel: text("builder_model"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

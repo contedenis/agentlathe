@@ -370,4 +370,41 @@ test.describe("agentlathe e2e flows", () => {
       await pool.end();
     }
   });
+
+  test("the builder proposes an agent and loads it into the form", async ({
+    page,
+  }) => {
+    await page.goto("/settings");
+    const builderModel = page.getByLabel("Builder model");
+    await builderModel.fill(MODEL);
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/settings") &&
+        response.request().method() === "PATCH",
+    );
+    await builderModel.blur();
+    expect((await saved).ok()).toBe(true);
+
+    await page.goto("/agents/new");
+    await page
+      .getByRole("button", { name: "Describe it to the builder" })
+      .click();
+    await page
+      .getByLabel("Message to the builder")
+      .fill(
+        "An agent that greets visitors of a bakery website and tells them the opening hours, 8 to 18 every day. Use model " +
+          MODEL +
+          " and nothing else from this instance. Go ahead without asking.",
+      );
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const load = page.getByRole("button", { name: "Load into form" });
+    await expect(load.first()).toBeVisible({ timeout: 2 * MODEL_TIMEOUT });
+    await load.last().click();
+
+    await expect(page.getByText("Proposal loaded.")).toBeVisible();
+    await expect(page.locator("#name")).not.toHaveValue("");
+    await expect(page.locator("#model")).toHaveValue(MODEL);
+    await expect(page.getByRole("button", { name: "Create" })).toBeEnabled();
+  });
 });

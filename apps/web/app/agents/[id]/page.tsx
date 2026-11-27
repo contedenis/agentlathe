@@ -1,5 +1,9 @@
 import { getContextLimit } from "@agentlathe/runner";
-import { ArrowUpRightIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  SparklesIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActiveBadge } from "@/components/active-badge";
@@ -142,6 +146,14 @@ export default async function AgentDetailPage({
           render={<Link href={`/agents/${id}/edit`} />}
         >
           Edit
+        </Button>
+        <Button
+          variant="outline"
+          nativeButton={false}
+          render={<Link href={`/agents/${id}/edit?builder`} />}
+        >
+          <SparklesIcon />
+          Improve with builder
         </Button>
         <ToggleActiveButton
           endpoint={`/api/agents/${id}`}

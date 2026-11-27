@@ -326,6 +326,44 @@ describe("agentConfigSnapshot / hashSnapshot", () => {
       expect(serialized).not.toContain(secret);
   });
 
+  it("adds a skill's script only to skills that have one, so other agents keep their hash", () => {
+    const plain = agentConfigSnapshot(baseConfig());
+    const [tone, format] = baseConfig().skills;
+    const noScript = agentConfigSnapshot({
+      ...baseConfig(),
+      skills: [
+        { ...tone, script: null, inputSchema: null, needsApproval: false },
+        format,
+      ],
+    });
+    const scripted = (script: string, needsApproval = false) =>
+      agentConfigSnapshot({
+        ...baseConfig(),
+        skills: [
+          { ...tone, script, inputSchema: { type: "object" }, needsApproval },
+          format,
+        ],
+      });
+
+    expect(hashSnapshot(noScript)).toBe(hashSnapshot(plain));
+    expect(plain.skills[1]).not.toHaveProperty("script");
+    expect(scripted("return 1;").skills).toContainEqual({
+      name: "Tone",
+      description: "Voice",
+      content: "Be kind.",
+      script: "return 1;",
+      inputSchema: { type: "object" },
+      needsApproval: false,
+    });
+    expect(hashSnapshot(scripted("return 1;"))).not.toBe(hashSnapshot(plain));
+    expect(hashSnapshot(scripted("return 2;"))).not.toBe(
+      hashSnapshot(scripted("return 1;")),
+    );
+    expect(hashSnapshot(scripted("return 1;", true))).not.toBe(
+      hashSnapshot(scripted("return 1;")),
+    );
+  });
+
   it("adds memory stores only to agents that have them, so other agents keep their hash", () => {
     const without = agentConfigSnapshot(baseConfig());
     const empty = agentConfigSnapshot({ ...baseConfig(), memoryStores: [] });

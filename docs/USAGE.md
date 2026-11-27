@@ -1,12 +1,12 @@
 # Usage
 
-How to build agents in agentlathe and call them from the outside. If you have not got it running yet, start with the [quickstart](../README.md#quickstart-with-docker).
+How to build agents in agentlathe, review what they did and call them from the outside. If you have not got it running yet, start with the [quickstart](../README.md#quickstart-with-docker).
 
 ## Agents
 
 An agent is a name, a model slug, an optional system prompt, and a step budget. Everything else (tools, skills, sub-agents, MCP tools, knowledge collections) is attached by relation. `maxSteps` defaults to `20` and caps the agent's own steps — shared across approval rounds, not per round, and a sub-agent's steps count against the sub-agent's budget, not its caller's; the name is unique, because `/v1` lets callers address an agent by it.
 
-In the UI: **Agents → New agent**. The model dropdown is populated from the provider's `/models` catalog — OpenRouter's by default.
+In the UI: **Agents → New agent**. The model dropdown is populated from the provider's `/models` catalog — OpenRouter's by default. You do not have to start from an empty form: the [builder](#the-agent-builder) proposes an agent from what the instance already has.
 
 The agent page has four tabs: **Playground**, **Configuration**, **Evaluation** and **Connect**; the address carries the tab (`?tab=connect`), so a link opens the same one. In the Playground, **New conversation** clears the chat and starts a new thread.
 
@@ -49,7 +49,7 @@ curl -X POST http://localhost:3000/api/tools \
   }'
 ```
 
-MCP tools can also require approval — per agent, toggled on each selected tool in the agent form (the shield on the selected-tool badge). Sub-agent calls never gate.
+MCP tools can also require approval — per agent, toggled on each selected tool in the agent form (the shield on the selected-tool badge). A skill's script can too (see [Scripts](#scripts)). Sub-agent calls never gate.
 
 ## MCP servers
 
@@ -95,6 +95,29 @@ Use the `load_skill` tool with the skill name to load its full content.
 ```
 
 So five long playbooks cost you five lines of context until one is actually needed. `load_skill` takes `{ "name": "Support tone" }` and returns the body.
+
+### Scripts
+
+A skill can also carry a JavaScript script, for what a model computes badly on its own: arithmetic, dates, parsing and validating data. The agent gets it as a tool of its own, named `skill_` plus the skill's name (`skill_Date_math`) and described by the skill's description; the skills list in the prompt says which tool runs it. The script is the body of a function: it reads the tool's input as `input` and returns a JSON value. It cannot be `async`: a script that returns a promise fails.
+
+```js
+// input: { "start": "2026-01-31", "days": 30 }
+const date = new Date(input.start);
+date.setUTCDate(date.getUTCDate() + input.days);
+return { date: date.toISOString().slice(0, 10) };
+```
+
+**Input and result.** An optional input schema (JSON Schema, of type `object`) is enforced like an HTTP tool's: input that does not match goes back to the model instead of reaching the script. Without one the script takes any object. The input is limited to 256 KB. What the script returns reaches the model as `{ "result": … }`, with a `logs` array when it called `console.log`.
+
+**Limits.** The script runs in a sandbox: no network, no files, no environment variables, no packages and no timers, two seconds and 64 MB at most, and a result cut at the same limit as a tool's. A script that throws, runs out of time or out of memory does not end the run: the model is handed the error and the call is recorded as failed. The instance runs four scripts at a time; more wait briefly, and when too many are waiting a call fails the same way.
+
+**Testing.** **Test run** in the skill form runs the script against an input you type, before you save.
+
+**Approval.** "Requires approval before running" gates the script like a tool that needs approval: the Playground asks, an MCP client that supports elicitation is asked, and `/v1`, schedules and sub-agents deny it.
+
+**Metrics.** On the metrics page a script's runs are a row of their own, "*name* (script)", apart from the loads of the skill's text.
+
+Over the API a skill takes `script` (up to 100,000 characters, `null` for none), `inputSchema` and `needsApproval`.
 
 ## Sub-agents
 
@@ -274,10 +297,10 @@ Search is the same with or without the Postgres [pgvector](https://github.com/pg
 Three tables, deliberately separated:
 
 - **`agent_runs`** — one row per call: agent, source (`dashboard` / `v1` / `mcp` / `schedule`), status, `thread_id`, `subject_id`, model, duration, steps, tool calls, in/out tokens, approvals requested and granted, error. **No message content.**
-- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`, `memory`, `knowledge`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable.
+- **`agent_run_calls`** — one row per invocation inside a run: `kind` (`tool`, `mcp`, `sub_agent`, `skill`, `memory`, `knowledge`), name, duration, status (`ok` / `error` / `denied`). This is what makes "which tool is slow, which one keeps getting denied" answerable. A skill's script is a `skill` call under its tool name (`skill_…`); loading the skill's text is a `skill` call under the skill's name.
 - **`run_transcripts`** — the actual input and output messages, keyed 1:1 on the run.
 
-Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents, memory settings, knowledge collections and their modes) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents, memory and knowledge. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
+Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills and their scripts, tools, MCP selections, sub-agents, memory settings, knowledge collections and their modes) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents, memory and knowledge. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
 
 Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in **Settings** (`/settings`), or over the API:
 
@@ -367,6 +390,22 @@ On the **Runs** page every row summarises its verdicts: a red badge counts failu
 - **Not evaluated**: runs with a stored transcript and no counted verdicts, for agents that have at least one active criterion, to spot gaps (for example runs from before you wrote a criterion).
 
 Next to them, **Needs attention** keeps the runs that failed or carry an open note — the same list Home shows — and an agent's **Runs** link opens the list filtered to that agent. The filters combine. A run opened from the list remembers the filters it came from: the arrows at the top of the run page go to the newer and the older run in that same list, so a queue can be reviewed without going back to it.
+
+## The agent builder
+
+The builder is a chat that knows what this instance has and proposes configuration for you to review. It never saves anything: every proposal opens in the form you would have filled in yourself.
+
+**Builder model.** The builder uses a model of its own: set "Builder model" under **Settings** to the ID of a model your provider serves (`builderModel` in `PATCH /api/settings`, `null` to turn it off). Until you do, the builder is off. It writes system prompts, so pick a capable model; its calls are billed by your provider like an agent's.
+
+**A new agent.** On **Agents → New agent**, **Describe it to the builder** opens the chat. Say what the agent is for, who calls it and what it must not do. The builder reads the instance's HTTP tools with their input schemas, skills, MCP servers, knowledge collections and agents, and looks up the tools an MCP server offers and the models of your provider. It answers with a card: the model it picked, what it attaches and why, and what the agent would need that the instance does not have yet. **Load into form** fills the agent form; change what you like and save. A proposal that names something that does not exist, a taken name or a model your provider does not serve is sent back to the builder before you see it. Loading a proposal over a form you already edited asks first.
+
+**An existing agent.** **Improve with builder** on an agent's page opens the edit form with the chat open; the edit form has the same button, **Improve it with the builder**. There the builder also knows that agent's configuration. It reads the latest open [notes](#fix-drafts) on the agent's runs, the [verdicts](#reviewing-verdicts) where a run failed a criterion or the judge was unsure, the latest runs that ended in an error, and any of those runs' transcripts, and proposes the changed configuration. The card says what differs from the saved one, names a model that changes and any MCP tool that loses its approval, and says how many notes the change answers. After you save, it offers to mark those notes applied.
+
+**Schedules and criteria.** For an existing agent the builder can also propose a schedule, or criteria, such as one that would catch a problem it just fixed. Each opens in its own form.
+
+**Skills.** In both places it can propose a skill, with a [script](#scripts) when the job is computing. A skill you save is not attached to any agent until an agent proposal, or you, attach it.
+
+**What is kept.** The conversation stays in your browser tab and goes away with it. Nothing about it is recorded on the server: no run, no transcript, no cost on the metrics page. What the builder reads is other people's text, so read what a proposal changes before you save it. See [SECURITY.md](../SECURITY.md#the-builder-sends-your-catalog-to-its-model) for what the builder sends to its model.
 
 ---
 
@@ -477,6 +516,8 @@ Retention is TTL-based and swept lazily (on page loads, and every ten minutes or
 **Evaluated transcripts leave the instance.** When an agent has active criteria, each run that is evaluated (or previewed against a draft criterion) is sent to the judge as text: TypeSafe's Jev, through OpenRouter by default or the host `JUDGE_URL` names. Agents without criteria send nothing, and switching off "Evaluate new runs automatically" limits it to the runs you evaluate by hand.
 
 **Memory has no TTL.** Entries and every past version stay until you delete the memory or its agent: deleting an entry hides it but keeps its history, which can be restored. Forgetting a subject removes that subject's memory and transcripts. Like transcripts, memory is not redacted: the agent's tools refuse an entry that looks like a credential, and nothing else is checked.
+
+**The builder sends your catalog to its model.** When someone uses the [builder](#the-agent-builder), the names and descriptions of what the instance has go to the builder's model at your provider, and for an existing agent also its configuration and the notes, verdicts and transcripts the builder reads. Its conversations are not recorded on the server; they stay in the browser tab. See [SECURITY.md](../SECURITY.md#the-builder-sends-your-catalog-to-its-model).
 
 **Knowledge documents leave the instance to be indexed.** The whole text of every document you upload is sent to the embedding provider, again whenever `EMBEDDING_MODEL` changes, and what agents find or read whole goes to their model with each run. Documents, their text and their passages have no TTL and no redaction, and anyone who reaches the dashboard can read and download them. A document can also carry text written to steer the agent: see [SECURITY.md](../SECURITY.md#knowledge-is-sent-out-to-be-indexed-and-read-as-data).
 

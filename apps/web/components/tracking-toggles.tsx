@@ -17,6 +17,7 @@ export type AppSettings = {
   agentRunTtlDays: number;
   transcriptTtlDays: number;
   judgeModel: string;
+  builderModel: string | null;
 };
 
 export const SOURCES = [
@@ -48,6 +49,9 @@ export function TrackingToggles({
     String(initial.transcriptTtlDays),
   );
   const [judgeModelText, setJudgeModelText] = useState(initial.judgeModel);
+  const [builderModelText, setBuilderModelText] = useState(
+    initial.builderModel ?? "",
+  );
   const [pending, startTransition] = useTransition();
 
   async function save(values: Partial<AppSettings>) {
@@ -64,6 +68,7 @@ export function TrackingToggles({
       setTtlText(String(previous.agentRunTtlDays));
       setTranscriptTtlText(String(previous.transcriptTtlDays));
       setJudgeModelText(previous.judgeModel);
+      setBuilderModelText(previous.builderModel ?? "");
       toast.error(
         err instanceof Error ? err.message : "Could not save the change.",
       );
@@ -102,6 +107,13 @@ export function TrackingToggles({
     setJudgeModelText(trimmed);
     if (trimmed === settings.judgeModel) return;
     void save({ judgeModel: trimmed });
+  }
+
+  function commitBuilderModel() {
+    const trimmed = builderModelText.trim();
+    setBuilderModelText(trimmed);
+    if (trimmed === (settings.builderModel ?? "")) return;
+    void save({ builderModel: trimmed || null });
   }
 
   return (
@@ -191,6 +203,26 @@ export function TrackingToggles({
         <span className="text-xs text-muted-foreground">
           Jev model used to judge runs against criteria, served by{" "}
           <span className="font-mono">{judgeHost}</span>.
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t pt-4">
+        <Label htmlFor="builderModel">Builder model</Label>
+        <Input
+          id="builderModel"
+          value={builderModelText}
+          placeholder="none"
+          disabled={pending}
+          onChange={(e) => setBuilderModelText(e.target.value)}
+          onBlur={commitBuilderModel}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          className="font-mono text-xs"
+        />
+        <span className="text-xs text-muted-foreground">
+          Model the agent builder thinks with, by its ID at your provider. Empty
+          turns the builder off. Pick a capable one: it writes system prompts.
         </span>
       </div>
     </div>

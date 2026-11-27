@@ -58,6 +58,10 @@ export function subAgentToolName(agentSlugValue: string): string {
   return capToolName(`subagent_${slug(agentSlugValue)}`);
 }
 
+export function skillToolName(name: string): string {
+  return capToolName(`skill_${slug(name) || "script"}`);
+}
+
 export function agentAskToolName(agentSlugValue: string): string {
   const base = slug(agentSlugValue).toLowerCase().slice(0, 50);
   return base ? `ask_${base}` : "ask_agent";

@@ -28,6 +28,7 @@ export {
   getContextLimit,
   PROVIDER_BASE_URL,
   runTimeout,
+  toolResultLimit,
 } from "./helpers";
 export { compileInputSchema } from "./input-schema";
 export { embedTexts } from "./knowledge";
@@ -44,6 +45,7 @@ export {
   type RunRecorderOptions,
 } from "./recording";
 export { buildAgentRuntime } from "./runtime";
+export { runScript, SCRIPT_TIMEOUT_MS, ScriptError } from "./sandbox";
 export { streamAgentForUI } from "./stream-ui";
 export { discoverMcpTools } from "./tools";
 export type { AgentVersionSnapshot } from "./versions";

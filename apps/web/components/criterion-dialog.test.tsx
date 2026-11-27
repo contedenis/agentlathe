@@ -236,6 +236,7 @@ function verdict(
     skipReason: null,
     error: null,
     judgeModel: "typesafe/jev-1.13",
+    builderModel: null,
     ...extra,
   };
 }

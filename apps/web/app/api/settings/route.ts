@@ -25,6 +25,7 @@ const trackingSchema = z
       .max(MAX_AGENT_RUN_TTL_DAYS)
       .optional(),
     judgeModel: z.string().trim().min(1).max(200).optional(),
+    builderModel: z.string().trim().min(1).max(200).nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Send at least one field.",

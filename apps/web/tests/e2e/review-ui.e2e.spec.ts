@@ -306,6 +306,22 @@ test.describe("review UI", () => {
     await sheet.locator("#name").fill(skillName);
     await sheet.locator("#description").fill("Throwaway e2e skill.");
     await sheet.locator("#content").fill("Some throwaway skill content.");
+
+    const script = sheet.locator(".cm-content").first();
+    await script.click();
+    await page.keyboard.type("return { total: input.a + input.b };");
+    await sheet.locator("#testInput").fill('{"a": 2, "b": 3}');
+    await sheet.getByRole("button", { name: "Run script" }).click();
+    await expect(sheet.getByText(/Returned in \d+ ms/)).toBeVisible();
+    await expect(sheet.getByText('"total": 5')).toBeVisible();
+
+    await script.click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.type("while (true) {}");
+    await sheet.getByRole("button", { name: "Run script" }).click();
+    await expect(sheet.getByText(/Failed in \d+ ms/)).toBeVisible();
+    await expect(sheet.getByText("The script ran out of time.")).toBeVisible();
+
     await sheet.getByRole("button", { name: "Create" }).click();
 
     await expect(page.getByText("Skill created.")).toBeVisible();

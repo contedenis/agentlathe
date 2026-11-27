@@ -35,6 +35,20 @@ And they can remember: give an agent a **memory** — one for all its runs, one 
 
 And they can consult documents: upload PDFs, Markdown or text files to a **knowledge** collection and attach it to an agent, which then searches it for the passages it needs, or reads it whole when it is short. The document page shows the text the agent actually reads, and the run page shows what each search returned.
 
+And they can compute: a **skill** can carry a short JavaScript script the agent runs as a tool of its own, for the arithmetic, dates and parsing a model gets wrong by itself. It runs in a sandbox with no network and no files, and the skill form runs it against a test input before you save.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/skill-script-dark.png">
+  <img alt="The New skill form: a script that adds days to a date, its optional input schema and approval switch, and a test run that returned the computed date in 58 ms." src="docs/images/skill-script-light.png">
+</picture>
+
+And you do not have to start from an empty form: the **builder** is a chat that knows the tools, skills, MCP servers, knowledge and agents of your instance and proposes an agent out of them, or reads the notes and verdicts on an agent's runs and proposes what to change. It only proposes; you review each proposal in the form and save it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/builder-dark.png">
+  <img alt="The builder next to the New agent form: a request for a support agent that must never promise a refund, answered with a proposal card that names the model, the skill, tools, knowledge and memory it attaches and why, what the instance does not have yet, and a Load into form button." src="docs/images/builder-light.png">
+</picture>
+
 One more thing that belongs up here: agentlathe is **built and maintained by one person**, best-effort, with no support channel — read [Project status](#project-status) before you build anything on it.
 
 ## Requirements
@@ -110,7 +124,7 @@ The agent's **Connect** tab has the curl call, the OpenAI SDK snippets (Python a
   <img alt="An agent's Connect tab: the base URL and model id of the OpenAI-compatible API with a curl example, next to the agent's MCP server URL, its tool name and a client configuration block." src="docs/images/agent-connect-light.png">
 </picture>
 
-The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, run subjects, memory, knowledge, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
+The full manual — building agents, HTTP tools, MCP servers, skills and their scripts, sub-agents, schedules, run subjects, memory, knowledge, metrics, fix drafts, criteria and evaluations, the builder, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 
 ## Documentation
 
@@ -118,7 +132,7 @@ The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | The manual: build agents, attach tools, call them, review the runs |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running without Docker, production deployment, reverse proxy, backups |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, memory, knowledge, evaluation, runner internals |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, the three transports, the scheduler, memory, knowledge, evaluation, runner internals, the builder |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Scripts, test levels, conventions |
 | [SECURITY.md](SECURITY.md) | Accepted tradeoffs, deferred work, how to report a vulnerability |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version, and what an upgrade asks of you |
@@ -134,6 +148,8 @@ Agents with memory also keep what they saved, with no TTL and no redaction; anyo
 Knowledge documents are kept in full, also with no TTL and no redaction, and their text is sent to the embedding provider to be indexed.
 
 When an agent has criteria, its stored transcripts are also sent to the judge (TypeSafe's Jev, through OpenRouter's Decisions API or the host `JUDGE_URL` names) to be evaluated.
+
+When you use the agent builder, the names and descriptions of what the instance has, and the notes, verdicts and transcripts of the agent it improves, are sent to the builder's model at your provider.
 
 The gates, the defaults and the retention TTLs are in [docs/USAGE.md](docs/USAGE.md#recording-and-privacy); the reasoning behind them, in [SECURITY.md](SECURITY.md).
 

@@ -1,5 +1,7 @@
-import { RESERVED_TOOL_NAMES } from "@agentlathe/db";
+import { RESERVED_TOOL_NAMES, skillToolName } from "@agentlathe/db";
 import {
+  type JSONSchema7,
+  jsonSchema,
   type PrepareStepFunction,
   pruneMessages,
   type StopCondition,
@@ -22,7 +24,9 @@ import {
   buildProvider,
   estimateTokens,
   getContextLimit,
+  toolResultLimit,
 } from "./helpers";
+import { compileInputSchema, describeSchemaErrors } from "./input-schema";
 import {
   buildSearchKnowledgeTool,
   type KnowledgeView,
@@ -46,6 +50,7 @@ import {
   addChildRunStats,
   createRunStatsCollector,
 } from "./recording";
+import { runScript } from "./sandbox";
 import { buildTools, type ToolKind } from "./tools";
 
 const BUILTIN_KINDS: Record<(typeof RESERVED_TOOL_NAMES)[number], ToolKind> = {
@@ -61,11 +66,18 @@ export function buildSystemPrompt(
   skills: SkillRow[],
   memory: MemoryStoreView[] = [],
   knowledge?: KnowledgeView,
+  scriptTools?: Map<string, string>,
 ): string {
   const sections = [agent.systemPrompt ?? ""];
   if (skills.length > 0) {
     const listed = skills
-      .map((skill) => `- ${skill.name}: ${skill.description}`)
+      .map((skill) => {
+        const scriptTool = scriptTools?.get(skill.id);
+        const runsAs = scriptTool
+          ? ` Its script runs as the \`${scriptTool}\` tool.`
+          : "";
+        return `- ${skill.name}: ${skill.description}${runsAs}`;
+      })
       .join("\n");
     sections.push(
       `## Available skills\nUse the \`load_skill\` tool with the skill name to load its full content.\n${listed}`,
@@ -75,6 +87,37 @@ export function buildSystemPrompt(
   const knowledgeSection = knowledge ? renderKnowledgeSection(knowledge) : "";
   if (knowledgeSection) sections.push(knowledgeSection);
   return sections.join("\n\n");
+}
+
+const ANY_OBJECT_SCHEMA = { type: "object" };
+
+export function buildSkillScriptTool(
+  skill: SkillRow & { script: string },
+  resultLimit: number,
+): Tool {
+  const schema = skill.inputSchema ?? ANY_OBJECT_SCHEMA;
+  const validateInput = compileInputSchema(schema);
+  return tool({
+    description: skill.description,
+    inputSchema: jsonSchema(
+      schema as JSONSchema7,
+      validateInput
+        ? {
+            validate: (value) =>
+              validateInput(value)
+                ? { success: true, value }
+                : {
+                    success: false,
+                    error: new Error(
+                      `Input does not match the skill's schema: ${describeSchemaErrors(validateInput)}`,
+                    ),
+                  },
+          }
+        : undefined,
+    ),
+    execute: (input, { abortSignal }) =>
+      runScript({ script: skill.script, input, resultLimit, abortSignal }),
+  });
 }
 
 export function buildLoadSkillTool(skills: SkillRow[]): Tool {
@@ -200,12 +243,34 @@ async function assembleRuntime(
     toolKinds.set(name, BUILTIN_KINDS[name]);
   }
 
+  const scriptTools = new Map<string, string>();
+  for (const skill of skills) {
+    if (!skill.script) continue;
+    const finalName = addTool(
+      toolset,
+      skillToolName(skill.name),
+      buildSkillScriptTool(
+        { ...skill, script: skill.script },
+        toolResultLimit(await contextLimit),
+      ),
+    );
+    toolKinds.set(finalName, "skill");
+    if (skill.needsApproval) approvalToolNames.add(finalName);
+    scriptTools.set(skill.id, finalName);
+  }
+
   const collector = createRunStatsCollector(toolKinds);
 
   try {
     const runtime = new ToolLoopAgent({
       model: buildProvider(agent.model),
-      instructions: buildSystemPrompt(agent, skills, memory.stores, knowledge),
+      instructions: buildSystemPrompt(
+        agent,
+        skills,
+        memory.stores,
+        knowledge,
+        scriptTools,
+      ),
       tools: toolset,
       stopWhen: options?.stopWhen ?? stepCountIs(agent.maxSteps ?? 20),
       toolApproval: options?.buildApproval?.(approvalToolNames),

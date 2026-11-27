@@ -57,36 +57,39 @@ function today(timeZone: string) {
   return new Intl.DateTimeFormat("sv-SE", { timeZone }).format(new Date());
 }
 
+export type ScheduleDraft = Partial<Omit<ScheduleFormValues, "id">>;
+
 export function ScheduleForm({
   initial,
+  draft,
   agents,
   onSuccess,
   onCancel,
 }: {
   initial?: ScheduleFormValues;
+  draft?: ScheduleDraft;
   agents: ScheduleAgentOption[];
   onSuccess: () => void;
   onCancel: () => void;
 }) {
   const mode = initial ? "edit" : "create";
+  const start = { ...initial, ...draft };
   const [timezone] = useState(
-    () => initial?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    () => start.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
-  const [agentId, setAgentId] = useState(
-    initial?.agentId ?? agents[0]?.id ?? "",
-  );
-  const [name, setName] = useState(initial?.name ?? "");
+  const [agentId, setAgentId] = useState(start.agentId ?? agents[0]?.id ?? "");
+  const [name, setName] = useState(start.name ?? "");
   const [frequency, setFrequency] = useState(
-    (initial?.frequency as ScheduleFrequency | undefined) ?? "daily",
+    (start.frequency as ScheduleFrequency | undefined) ?? "daily",
   );
-  const [timeOfDay, setTimeOfDay] = useState(initial?.timeOfDay ?? "09:00");
-  const [weekday, setWeekday] = useState(initial?.weekday ?? 1);
+  const [timeOfDay, setTimeOfDay] = useState(start.timeOfDay ?? "09:00");
+  const [weekday, setWeekday] = useState(start.weekday ?? 1);
   const [startDate, setStartDate] = useState(
-    () => initial?.startDate ?? today(timezone),
+    () => start.startDate ?? today(timezone),
   );
-  const [input, setInput] = useState(initial?.input ?? "");
-  const [subjectId, setSubjectId] = useState(initial?.subjectId ?? "");
-  const [memoryKey, setMemoryKey] = useState(initial?.memoryKey ?? "");
+  const [input, setInput] = useState(start.input ?? "");
+  const [subjectId, setSubjectId] = useState(start.subjectId ?? "");
+  const [memoryKey, setMemoryKey] = useState(start.memoryKey ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
