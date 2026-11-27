@@ -1,3 +1,4 @@
+import { fallbackContextLimit } from "@agentlathe/runner";
 import { AgentForm } from "@/components/forms/agent-form";
 import { PageHeader } from "@/components/page-header";
 import { getOpenRouterModels } from "@/lib/openrouter-models";
@@ -22,6 +23,7 @@ export default async function NewAgentPage() {
         catalogs={catalogs}
         collections={collections}
         models={models}
+        contextFallback={fallbackContextLimit()}
       />
     </div>
   );

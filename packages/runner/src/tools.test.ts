@@ -26,6 +26,9 @@ vi.mock("drizzle-orm", async (importOriginal) => ({
 }));
 
 import { db } from "@agentlathe/db";
+
+const CONTEXT = 256 * 1024;
+
 import { createMCPClient } from "@ai-sdk/mcp";
 import { buildHeadlessToolApproval } from "./approval";
 import { addTool } from "./helpers";
@@ -248,8 +251,9 @@ describe("buildSubAgentTools — child stats reporting", () => {
       memorySeen: [],
       memoryWrites: [],
     };
+    const generate = vi.fn().mockResolvedValue({ text: "ok" });
     vi.mocked(buildSubAgentRuntime).mockResolvedValue({
-      agent: { generate: vi.fn().mockResolvedValue({ text: "ok" }) },
+      agent: { generate },
       cleanup: async () => {},
       stats: () => childStats,
     } as unknown as Awaited<ReturnType<typeof buildSubAgentRuntime>>);
@@ -270,6 +274,9 @@ describe("buildSubAgentTools — child stats reporting", () => {
     await execOf(toolset["subagent_child-one"])({ task: "x" }, baseOptions());
 
     expect(onChildStats).toHaveBeenCalledWith(childStats);
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: { totalMs: 30 * 60 * 1000 } }),
+    );
   });
 });
 
@@ -376,7 +383,7 @@ describe("loadMcpTools — resilience, prefix and explicit selection", () => {
       } as unknown as Awaited<ReturnType<typeof createMCPClient>>;
     });
 
-    const { tools, failed, clients } = await loadMcpTools("agent");
+    const { tools, failed, clients } = await loadMcpTools("agent", CONTEXT);
 
     expect(Object.keys(tools)).toEqual(["Good_Server__search"]);
     expect(failed).toEqual(["Bad Server"]);
@@ -398,7 +405,7 @@ describe("loadMcpTools — resilience, prefix and explicit selection", () => {
     ]);
     vi.mocked(createMCPClient).mockRejectedValue(new Error("ECONNREFUSED"));
 
-    const { tools, failed } = await loadMcpTools("agent");
+    const { tools, failed } = await loadMcpTools("agent", CONTEXT);
 
     expect(tools).toEqual({});
     expect(failed).toEqual(["Down"]);
@@ -420,7 +427,7 @@ describe("loadMcpTools — resilience, prefix and explicit selection", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { tools, failed } = await loadMcpTools("agent");
+    const { tools, failed } = await loadMcpTools("agent", CONTEXT);
 
     expect(Object.keys(tools)).toEqual(["Deploy_Bot__status"]);
     expect(failed).toEqual(["Deploy Bot (tools no longer offered: deploy)"]);
@@ -447,7 +454,7 @@ describe("loadMcpTools — approval gate for MCP tools", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { approvalToolNames } = await loadMcpTools("agent");
+    const { approvalToolNames } = await loadMcpTools("agent", CONTEXT);
 
     expect(approvalToolNames).toEqual(new Set(["Server__deploy"]));
   });
@@ -477,7 +484,7 @@ describe("loadMcpTools — approval gate for MCP tools", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { tools, approvalToolNames } = await loadMcpTools("agent");
+    const { tools, approvalToolNames } = await loadMcpTools("agent", CONTEXT);
 
     expect(Object.keys(tools).sort()).toEqual([
       "My_Server__deploy",
@@ -517,6 +524,7 @@ describe("buildTools — approval names union across sources", () => {
 
     const { approvalToolNames } = await buildTools(
       "agent",
+      CONTEXT,
       {
         callStack: new Set(["agent"]),
         depth: 0,
@@ -553,12 +561,43 @@ describe("loadMcpTools — connect timeout", () => {
     ]);
     vi.mocked(createMCPClient).mockImplementation(() => new Promise(() => {}));
 
-    const resultPromise = loadMcpTools("agent");
+    const resultPromise = loadMcpTools("agent", CONTEXT);
     await vi.advanceTimersByTimeAsync(30_000);
     const { tools, failed } = await resultPromise;
 
     expect(tools).toEqual({});
     expect(failed).toEqual(["Stuck"]);
+  });
+
+  it("a client that connects after the timeout is closed instead of leaked", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    let connect: (client: unknown) => void = () => {};
+    vi.mocked(loadMcpServers).mockResolvedValue([
+      {
+        id: "c1",
+        name: "Slow",
+        serverUrl: "http://slow",
+        authConfig: null,
+        approvalToolNames: [],
+        toolNames: ["x"],
+      },
+    ]);
+    vi.mocked(createMCPClient).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          connect = resolve as (client: unknown) => void;
+        }),
+    );
+
+    const resultPromise = loadMcpTools("agent", CONTEXT);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect((await resultPromise).failed).toEqual(["Slow"]);
+    expect(close).not.toHaveBeenCalled();
+
+    connect({ tools: vi.fn(), close });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("client.tools() that never resolves → after 30s reported failed and the client is closed", async () => {
@@ -578,7 +617,7 @@ describe("loadMcpTools — connect timeout", () => {
       close,
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const resultPromise = loadMcpTools("agent");
+    const resultPromise = loadMcpTools("agent", CONTEXT);
     await vi.advanceTimersByTimeAsync(30_000);
     const { failed } = await resultPromise;
 
@@ -617,7 +656,7 @@ describe("MCP tool execute — 60s call timeout", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { tools } = await loadMcpTools("agent");
+    const { tools } = await loadMcpTools("agent", CONTEXT);
     const exec = execOf(tools.Server__search);
 
     const settled = exec({ q: "hi" }, baseOptions()).then(
@@ -655,10 +694,104 @@ describe("MCP tool execute — 60s call timeout", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { tools } = await loadMcpTools("agent");
+    const { tools } = await loadMcpTools("agent", CONTEXT);
     const exec = execOf(tools.Server__search);
 
     await expect(exec({ q: "hi" }, baseOptions())).rejects.toThrow("boom");
+  });
+});
+
+describe("MCP tool execute — caps the result at a quarter of the context", () => {
+  const CAP = 256 * 1024;
+  const execWithResult = async (result: unknown) => {
+    vi.mocked(loadMcpServers).mockResolvedValue([
+      {
+        id: "c1",
+        name: "Server",
+        serverUrl: "http://x",
+        authConfig: null,
+        approvalToolNames: [],
+        toolNames: ["search"],
+      },
+    ]);
+    vi.mocked(createMCPClient).mockResolvedValue({
+      tools: vi.fn().mockResolvedValue({
+        search: { description: "s", execute: async () => result },
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
+    const { tools } = await loadMcpTools("agent", CONTEXT);
+    return execOf(tools.Server__search)({ q: "hi" }, baseOptions());
+  };
+
+  it("a result within the cap is returned as the same object", async () => {
+    const result = { content: [{ type: "text", text: "hello" }] };
+    expect(await execWithResult(result)).toBe(result);
+  });
+
+  it("an oversized text part is cut and marked, keeping the parts before it", async () => {
+    const capped = (await execWithResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "x".repeat(CAP * 2) },
+        { type: "text", text: "never reached" },
+      ],
+      structuredContent: { rows: "y".repeat(CAP) },
+      isError: false,
+    })) as { content: Array<{ type: string; text: string }> };
+
+    expect(capped.content).toHaveLength(2);
+    expect(capped.content[0]).toEqual({ type: "text", text: "first" });
+    expect(capped.content[1].text.endsWith("[truncated]")).toBe(true);
+    expect(JSON.stringify(capped).length).toBeLessThan(CAP + 200);
+    expect(capped).not.toHaveProperty("structuredContent");
+    expect(capped).toMatchObject({ isError: false });
+  });
+
+  it("an oversized non-text part is replaced by the truncation marker", async () => {
+    const capped = (await execWithResult({
+      content: [
+        { type: "image", mimeType: "image/png", data: "A".repeat(CAP * 2) },
+      ],
+    })) as { content: unknown[] };
+
+    expect(capped.content).toEqual([{ type: "text", text: "[truncated]" }]);
+  });
+
+  it("an oversized result without a content array becomes one truncated text part", async () => {
+    const capped = (await execWithResult({
+      rows: "z".repeat(CAP * 2),
+    })) as { content: Array<{ type: string; text: string }> };
+
+    expect(capped.content).toHaveLength(1);
+    expect(capped.content[0].text.endsWith("[truncated]")).toBe(true);
+    expect(capped.content[0].text.length).toBeLessThan(CAP + 20);
+  });
+
+  it("an oversized result keeps isError and nothing else beside its content", async () => {
+    const capped = await execWithResult({
+      content: [{ type: "text", text: "x".repeat(CAP * 2) }],
+      isError: true,
+      _meta: { blob: "m".repeat(CAP) },
+    });
+
+    expect(Object.keys(capped as object).sort()).toEqual([
+      "content",
+      "isError",
+    ]);
+    expect(capped).toMatchObject({ isError: true });
+  });
+
+  it("when only structuredContent overflows, the result still says it was truncated", async () => {
+    const capped = (await execWithResult({
+      content: [{ type: "text", text: "summary" }],
+      structuredContent: { rows: "y".repeat(CAP * 2) },
+    })) as { content: unknown[] };
+
+    expect(capped.content).toEqual([
+      { type: "text", text: "summary" },
+      { type: "text", text: "[truncated]" },
+    ]);
   });
 });
 
@@ -776,6 +909,19 @@ describe("addTool — deterministic collision resolution", () => {
     expect(warn).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });
+
+  it("collision on a name at the length limit: the suffixed name still fits", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const target = {} as Parameters<typeof addTool>[0];
+    const marker = {} as Parameters<typeof addTool>[2];
+    const name = "n".repeat(64);
+
+    expect(addTool(target, name, marker)).toBe(name);
+    const renamed = addTool(target, name, marker);
+    expect(renamed).not.toBe(name);
+    expect(renamed).toHaveLength(64);
+    warn.mockRestore();
+  });
 });
 
 describe("loadMcpTools — prefix collisions across servers", () => {
@@ -804,7 +950,7 @@ describe("loadMcpTools — prefix collisions across servers", () => {
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
 
-    const { tools } = await loadMcpTools("agent");
+    const { tools } = await loadMcpTools("agent", CONTEXT);
 
     expect(Object.keys(tools).sort()).toEqual([
       "My_Server__search",
@@ -863,6 +1009,7 @@ describe("buildTools — merging sources with a collision", () => {
 
     const { tools } = await buildTools(
       "agent",
+      CONTEXT,
       {
         callStack: new Set(["agent"]),
         depth: 0,
@@ -919,6 +1066,7 @@ describe("makeMcpCleanup — through the cleanup from buildTools", () => {
 
     const { cleanup } = await buildTools(
       "agent",
+      CONTEXT,
       {
         callStack: new Set(["agent"]),
         depth: 0,
@@ -950,6 +1098,7 @@ describe("makeMcpCleanup — through the cleanup from buildTools", () => {
 
     const { cleanup } = await buildTools(
       "agent",
+      CONTEXT,
       {
         callStack: new Set(["agent"]),
         depth: 0,
@@ -999,6 +1148,7 @@ describe("buildTools — a sibling failure closes the MCP clients that already c
     await expect(
       buildTools(
         "agent",
+        CONTEXT,
         {
           callStack: new Set(["agent"]),
           depth: 0,
@@ -1021,6 +1171,7 @@ describe("buildTools — a sibling failure closes the MCP clients that already c
     await expect(
       buildTools(
         "agent",
+        CONTEXT,
         {
           callStack: new Set(["agent"]),
           depth: 0,
@@ -1046,7 +1197,7 @@ describe("loadHttpTools — res.ok, error with status+body and a signal with tim
         needsApproval,
       },
     ]);
-    const { tools, approvalToolNames } = await loadHttpTools("agent");
+    const { tools, approvalToolNames } = await loadHttpTools("agent", CONTEXT);
     return { exec: execOf(tools.call_api), approvalToolNames };
   };
 
@@ -1172,7 +1323,7 @@ function bodyResponse(
   } as unknown as Response;
 }
 
-describe("loadHttpTools — caps the response body at 256 KB", () => {
+describe("loadHttpTools — caps the response body at a quarter of the context", () => {
   const execOfHttp = async () => {
     stubHttpRows([
       {
@@ -1183,7 +1334,7 @@ describe("loadHttpTools — caps the response body at 256 KB", () => {
         needsApproval: false,
       },
     ]);
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
     return execOf(tools.call_api);
   };
 
@@ -1200,7 +1351,32 @@ describe("loadHttpTools — caps the response body at 256 KB", () => {
     vi.unstubAllGlobals();
   });
 
-  it("a response over 256 KB is cut at the cap and gets the [truncated] suffix", async () => {
+  it("the cap follows the model: 8,000 tokens of context leave 8,000 characters", async () => {
+    stubHttpRows([
+      {
+        name: "call_api",
+        description: "d",
+        endpoint: "http://api",
+        inputSchema: { type: "object" },
+        needsApproval: false,
+      },
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(bodyResponse("x".repeat(20_000))),
+    );
+
+    const { tools } = await loadHttpTools("agent", 8_000);
+    const result = (await execOf(tools.call_api)(
+      { q: 1 },
+      baseOptions(),
+    )) as string;
+
+    expect(result.length).toBe(8_000 + "[truncated]".length);
+    vi.unstubAllGlobals();
+  });
+
+  it("a response over the cap is cut there and gets the [truncated] suffix", async () => {
     const big = "x".repeat(300 * 1024);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(bodyResponse(big)));
 
@@ -1234,7 +1410,7 @@ describe("loadHttpTools — the declared input schema is enforced", () => {
       },
     ]);
 
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
     const schema = tools.pay.inputSchema as SchemaWithValidate;
 
     expect(schema.validate?.({ amount: 5 })).toMatchObject({ success: true });
@@ -1258,7 +1434,7 @@ describe("loadHttpTools — the declared input schema is enforced", () => {
       },
     ]);
 
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
     const schema = tools.legacy.inputSchema as SchemaWithValidate;
 
     expect(schema.validate).toBeUndefined();
@@ -1281,7 +1457,7 @@ describe("loadHttpTools — names the provider will accept", () => {
   it("spaces and accents: the model gets a slug, never the raw name", async () => {
     stubHttpRows([httpRow("Test webhook"), httpRow("Búsqueda de café")]);
 
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
 
     expect(Object.keys(tools)).toEqual(["Test_webhook", "Busqueda_de_cafe"]);
     for (const name of Object.keys(tools))
@@ -1291,7 +1467,7 @@ describe("loadHttpTools — names the provider will accept", () => {
   it("a name with nothing to slug still yields a usable name", async () => {
     stubHttpRows([httpRow("🙂")]);
 
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
 
     expect(Object.keys(tools)).toEqual(["tool"]);
   });
@@ -1299,7 +1475,7 @@ describe("loadHttpTools — names the provider will accept", () => {
   it("two names that slug the same are disambiguated, and approval follows the final name", async () => {
     stubHttpRows([httpRow("Test webhook"), httpRow("Test/webhook", true)]);
 
-    const { tools, approvalToolNames } = await loadHttpTools("agent");
+    const { tools, approvalToolNames } = await loadHttpTools("agent", CONTEXT);
 
     expect(Object.keys(tools)).toEqual(["Test_webhook", "Test_webhook_2"]);
     expect(approvalToolNames).toEqual(new Set(["Test_webhook_2"]));
@@ -1369,7 +1545,7 @@ describe("a failed tool call is recorded as an error call, whatever made it fail
         needsApproval: false,
       },
     ]);
-    const { tools } = await loadHttpTools("agent");
+    const { tools } = await loadHttpTools("agent", CONTEXT);
     return tools;
   };
 
@@ -1390,7 +1566,7 @@ describe("a failed tool call is recorded as an error call, whatever made it fail
       }),
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof createMCPClient>>);
-    const { tools } = await loadMcpTools("agent");
+    const { tools } = await loadMcpTools("agent", CONTEXT);
     return tools;
   };
 

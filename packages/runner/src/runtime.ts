@@ -144,15 +144,16 @@ async function assembleRuntime(
   options?: RuntimeOptions,
 ) {
   const childRunStats: AgentRunStats[] = [];
+  const contextLimit = getContextLimit(agent.model);
   const [skillsOutcome, memoryOutcome, knowledgeOutcome, composedOutcome] =
     await Promise.allSettled([
       loadSkills(agent.id),
       loadMemory(agent.id, ctx.run),
-      getContextLimit(agent.model).then((limit) =>
-        loadKnowledge(agent.id, limit),
-      ),
-      buildTools(agent.id, ctx, buildSubAgentRuntime, (childStats) =>
-        childRunStats.push(childStats),
+      contextLimit.then((limit) => loadKnowledge(agent.id, limit)),
+      contextLimit.then((limit) =>
+        buildTools(agent.id, limit, ctx, buildSubAgentRuntime, (childStats) =>
+          childRunStats.push(childStats),
+        ),
       ),
     ]);
   if (composedOutcome.status === "rejected") throw composedOutcome.reason;

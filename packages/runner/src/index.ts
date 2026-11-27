@@ -24,8 +24,10 @@ export {
 export {
   buildAuth,
   embeddingModelId,
+  fallbackContextLimit,
   getContextLimit,
   PROVIDER_BASE_URL,
+  runTimeout,
 } from "./helpers";
 export { compileInputSchema } from "./input-schema";
 export { embedTexts } from "./knowledge";

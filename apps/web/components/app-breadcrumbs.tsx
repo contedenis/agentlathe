@@ -8,7 +8,7 @@ import { useBreadcrumbTitle } from "@/components/breadcrumb-title";
 
 const SECTION_LABELS: Record<string, string> = {
   agents: "Agents",
-  tools: "Tools",
+  tools: "HTTP Tools",
   skills: "Skills",
   "mcp-servers": "MCP Servers",
   memory: "Memory",
@@ -16,6 +16,7 @@ const SECTION_LABELS: Record<string, string> = {
   schedules: "Schedules",
   metrics: "Metrics",
   runs: "Runs",
+  settings: "Settings",
 };
 
 const LEAF_LABELS: Record<string, string> = {

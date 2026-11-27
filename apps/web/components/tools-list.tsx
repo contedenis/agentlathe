@@ -10,7 +10,7 @@ export function ToolsList({ tools }: { tools: ToolRow[] }) {
   return (
     <ResourceList
       eyebrow="Workshop · tools"
-      title="Tools"
+      title="HTTP Tools"
       description="HTTP tools give an agent the ability to call an external endpoint."
       items={tools}
       columns={[

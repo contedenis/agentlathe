@@ -1,4 +1,5 @@
 import {
+  capToolName,
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_EMBEDDING_MODEL,
   SECRET_ENV_PREFIX,
@@ -17,6 +18,18 @@ const openrouter = createOpenAICompatible({
 
 export function buildProvider(model: string) {
   return openrouter(model);
+}
+
+const DEFAULT_RUN_TIMEOUT_SECONDS = 30 * 60;
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+export function runTimeout(): { totalMs: number } {
+  const seconds = Number(process.env.RUN_TIMEOUT_SECONDS);
+  const ms =
+    (Number.isFinite(seconds) && seconds > 0
+      ? seconds
+      : DEFAULT_RUN_TIMEOUT_SECONDS) * 1000;
+  return { totalMs: Math.min(Math.max(Math.round(ms), 1), MAX_TIMEOUT_MS) };
 }
 
 export function embeddingModelId(): string {
@@ -57,7 +70,10 @@ interface OpenRouterModelsResponse {
 }
 
 // A failed fetch is NOT cached: 60s cooldown, then retry.
-let modelLimitsCache: Promise<Record<string, number>> | null = null;
+const MODEL_LIMITS_TTL_MS = 60 * 60 * 1000;
+let modelLimits: Record<string, number> | null = null;
+let modelLimitsRefresh: Promise<void> | null = null;
+let refreshAfter = 0;
 let retryAfter = 0;
 
 async function loadOpenRouterModelLimits(): Promise<Record<string, number>> {
@@ -78,20 +94,40 @@ async function loadOpenRouterModelLimits(): Promise<Record<string, number>> {
   return limits;
 }
 
+export function fallbackContextLimit(): number {
+  const tokens = Number(process.env.CONTEXT_LIMIT_FALLBACK);
+  return Number.isInteger(tokens) && tokens > 0
+    ? tokens
+    : DEFAULT_CONTEXT_LIMIT;
+}
+
 export async function getContextLimit(model: string): Promise<number> {
-  if (!modelLimitsCache && Date.now() >= retryAfter) {
-    modelLimitsCache = loadOpenRouterModelLimits().catch(() => {
-      modelLimitsCache = null;
-      retryAfter = Date.now() + 60_000;
-      return {};
-    });
+  const now = Date.now();
+  if (
+    !modelLimitsRefresh &&
+    (!modelLimits || now >= refreshAfter) &&
+    now >= retryAfter
+  ) {
+    modelLimitsRefresh = loadOpenRouterModelLimits()
+      .then((limits) => {
+        modelLimits = limits;
+        refreshAfter = Date.now() + MODEL_LIMITS_TTL_MS;
+      })
+      .catch(() => {
+        retryAfter = Date.now() + 60_000;
+      })
+      .finally(() => {
+        modelLimitsRefresh = null;
+      });
   }
-  const limits = (await modelLimitsCache) ?? {};
-  return limits[model] ?? DEFAULT_CONTEXT_LIMIT;
+  if (!modelLimits) await modelLimitsRefresh;
+  return modelLimits?.[model] ?? fallbackContextLimit();
 }
 
 export function __resetContextLimitCache(): void {
-  modelLimitsCache = null;
+  modelLimits = null;
+  modelLimitsRefresh = null;
+  refreshAfter = 0;
   retryAfter = 0;
 }
 
@@ -107,7 +143,7 @@ export function addTool(
   let finalName = name;
   let n = 2;
   while (finalName in target) {
-    finalName = `${name}_${n}`;
+    finalName = capToolName(`${name}_${n}`);
     n += 1;
   }
   if (finalName !== name)

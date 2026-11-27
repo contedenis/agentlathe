@@ -4,10 +4,12 @@ import {
   AGENT_SLUG_PATTERN,
   agentAskToolName,
   agentSlug,
+  capToolName,
   httpToolName,
   mcpToolName,
   slug,
   subAgentToolName,
+  TOOL_NAME_MAX_LENGTH,
 } from "./naming";
 
 describe("slug", () => {
@@ -136,6 +138,36 @@ describe("subAgentToolName", () => {
 
   it("slugs a dot out of an agent slug", () => {
     expect(subAgentToolName("agent.v2")).toBe("subagent_agent_v2");
+  });
+});
+
+describe("capToolName", () => {
+  it("leaves a name within the limit untouched", () => {
+    const name = "a".repeat(TOOL_NAME_MAX_LENGTH);
+    expect(capToolName(name)).toBe(name);
+  });
+
+  it("cuts a longer name to the limit, keeping its start", () => {
+    const capped = capToolName(`server__${"x".repeat(100)}`);
+    expect(capped).toHaveLength(TOOL_NAME_MAX_LENGTH);
+    expect(capped.startsWith("server__xxx")).toBe(true);
+    expect(capped).toMatch(/^[a-zA-Z0-9_-]+$/);
+  });
+
+  it("keeps two long names that share a prefix apart, and is stable", () => {
+    const base = "y".repeat(80);
+    expect(capToolName(`${base}_one`)).not.toBe(capToolName(`${base}_two`));
+    expect(capToolName(`${base}_one`)).toBe(capToolName(`${base}_one`));
+  });
+
+  it("applies to every derived tool name", () => {
+    const long = "z".repeat(64);
+    for (const name of [
+      httpToolName(`${long} more`),
+      mcpToolName(long, "list_issues"),
+      subAgentToolName(long),
+    ])
+      expect(name).toHaveLength(TOOL_NAME_MAX_LENGTH);
   });
 });
 

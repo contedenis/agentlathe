@@ -16,7 +16,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TableCell, TableHead, TableRow } from "@/components/ui/table";
 import { compact, fmt, formatCost, formatDuration } from "@/lib/format";
-import { judgeHost } from "@/lib/judge";
 import {
   buildChartPoints,
   type EvaluationSummary,
@@ -124,7 +123,7 @@ export default async function MetricsPage({
           description="One row per run, with no message content. Only what you enable gets recorded."
         />
         <div className="flex flex-wrap items-center gap-2">
-          <TrackingSettings settings={settings} judgeHost={judgeHost()} />
+          <TrackingSettings settings={settings} />
           <MetricsRangePicker basePath="/metrics" range={range} />
         </div>
       </div>

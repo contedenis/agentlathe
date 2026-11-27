@@ -101,7 +101,14 @@ describe("AgentForm", () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
 
-    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -132,7 +139,14 @@ describe("AgentForm", () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
 
-    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -169,6 +183,7 @@ describe("AgentForm", () => {
           { id: "c2", name: "Release notes", description: "", chars: 0 },
         ]}
         models={[]}
+        contextFallback={128_000}
       />,
     );
 
@@ -223,7 +238,14 @@ describe("AgentForm", () => {
   it("gives the agent one memory, with the default settings", async () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
-    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -249,7 +271,14 @@ describe("AgentForm", () => {
   it("asks for the x-memory-key value and a purpose for a memory with a custom key", async () => {
     const user = userEvent.setup();
     vi.mocked(apiRequest).mockResolvedValue({ id: "agent-9" });
-    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");
@@ -291,7 +320,14 @@ describe("AgentForm", () => {
   it("rejects a slug with characters outside the allowed pattern before submitting", async () => {
     const user = userEvent.setup();
 
-    render(<AgentForm catalogs={emptyCatalogs} collections={[]} models={[]} />);
+    render(
+      <AgentForm
+        catalogs={emptyCatalogs}
+        collections={[]}
+        models={[]}
+        contextFallback={128_000}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Name"), "My Agent");
     await user.type(screen.getByLabelText("Model"), "openrouter/model");

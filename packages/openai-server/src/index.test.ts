@@ -611,7 +611,7 @@ describe("toOpenAIChatCompletionStream", () => {
 
     expect(done).toBe(false);
     expect(chunks.at(-1).error).toEqual({
-      message: "upstream boom",
+      message: "The server had an error while processing your request.",
       type: "api_error",
     });
     expect(lastResult).toEqual({ errored: true, error: upstreamError });
@@ -642,7 +642,7 @@ describe("toOpenAIChatCompletionStream", () => {
 
     expect(done).toBe(false);
     expect(chunks.at(-1).error).toEqual({
-      message: "iterator exploded",
+      message: "The server had an error while processing your request.",
       type: "api_error",
     });
     expect(doneCalls).toBe(1);

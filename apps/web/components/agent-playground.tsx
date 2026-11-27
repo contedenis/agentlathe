@@ -8,6 +8,7 @@ import {
 } from "@agentlathe/runner/chat-ui";
 import { useChat } from "@ai-sdk/react";
 import {
+  PlusIcon,
   RotateCcwIcon,
   SendIcon,
   SquareIcon,
@@ -102,7 +103,13 @@ function ThinkingIndicator() {
   );
 }
 
-export function AgentPlayground({ agentId }: { agentId: string }) {
+export function AgentPlayground({
+  agentId,
+  showMemoryKey = false,
+}: {
+  agentId: string;
+  showMemoryKey?: boolean;
+}) {
   const [input, setInput] = useState("");
   const [annotate, setAnnotate] = useState<{
     runId: string;
@@ -123,10 +130,12 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
 
   const {
     messages,
+    setMessages,
     sendMessage,
     addToolApprovalResponse,
     status,
     error,
+    clearError,
     stop,
     regenerate,
   } = useChat({
@@ -176,6 +185,13 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
       event.preventDefault();
       handleSend();
     }
+  }
+
+  function handleNewConversation() {
+    setMessages([]);
+    clearError();
+    setNotes([]);
+    threadIdRef.current = undefined;
   }
 
   function handleApprove(approvalId: string, approved: boolean) {
@@ -290,6 +306,17 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
               Regenerate
             </Button>
           )}
+          {!isBusy && messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleNewConversation}
+              className="text-muted-foreground"
+            >
+              <PlusIcon />
+              New conversation
+            </Button>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <Label
               htmlFor="playground-subject"
@@ -308,23 +335,27 @@ export function AgentPlayground({ agentId }: { agentId: string }) {
               maxLength={RUN_LABEL_MAX_LENGTH}
               className="h-7 w-40 text-xs"
             />
-            <Label
-              htmlFor="playground-memory-key"
-              className="text-xs font-normal text-muted-foreground"
-            >
-              Memory key
-            </Label>
-            <Input
-              id="playground-memory-key"
-              value={memoryKey}
-              onChange={(event) => {
-                setMemoryKey(event.target.value);
-                memoryKeyRef.current = event.target.value;
-              }}
-              placeholder="none"
-              maxLength={RUN_LABEL_MAX_LENGTH}
-              className="h-7 w-32 text-xs"
-            />
+            {showMemoryKey && (
+              <>
+                <Label
+                  htmlFor="playground-memory-key"
+                  className="text-xs font-normal text-muted-foreground"
+                >
+                  Memory key
+                </Label>
+                <Input
+                  id="playground-memory-key"
+                  value={memoryKey}
+                  onChange={(event) => {
+                    setMemoryKey(event.target.value);
+                    memoryKeyRef.current = event.target.value;
+                  }}
+                  placeholder="none"
+                  maxLength={RUN_LABEL_MAX_LENGTH}
+                  className="h-7 w-32 text-xs"
+                />
+              </>
+            )}
           </div>
         </div>
         <div className="flex gap-2">

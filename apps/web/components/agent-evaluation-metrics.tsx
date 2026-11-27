@@ -98,7 +98,7 @@ export function AgentEvaluationMetrics({
               ? "This agent has no active criteria, so its runs are not being judged."
               : `No run was judged against its criteria in ${period}.`}{" "}
             <Link
-              href={`/agents/${agentId}`}
+              href={`/agents/${agentId}?tab=evaluation`}
               className="text-foreground hover:text-primary"
             >
               Manage criteria on the agent page

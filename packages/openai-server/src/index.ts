@@ -128,15 +128,17 @@ function chunkFrame(chunk: unknown): string {
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
-function errorFrame(error: unknown): {
+const GENERIC_ERROR = "The server had an error while processing your request.";
+const TIMEOUT_ERROR = "The run exceeded its time limit.";
+
+function errorFrame(message: string): {
   error: { message: string; type: string };
 } {
-  return {
-    error: {
-      message: error instanceof Error ? error.message : String(error),
-      type: "api_error",
-    },
-  };
+  return { error: { message, type: "api_error" } };
+}
+
+function isTimeout(reason: unknown): boolean {
+  return String(reason).startsWith("TimeoutError");
 }
 
 type PendingToolCall = {
@@ -207,10 +209,17 @@ export function toOpenAIChatCompletionStream<TOOLS extends ToolSet>(
       let streamError: unknown;
       try {
         for await (const part of fullStream) {
-          if (part.type === "error") {
-            emit(errorFrame(part.error));
+          const timedOut = part.type === "abort" && isTimeout(part.reason);
+          const failure =
+            part.type === "error"
+              ? part.error
+              : timedOut
+                ? new Error(TIMEOUT_ERROR)
+                : undefined;
+          if (failure !== undefined) {
+            emit(errorFrame(timedOut ? TIMEOUT_ERROR : GENERIC_ERROR));
             errored = true;
-            streamError = part.error;
+            streamError = failure;
             break;
           }
           switch (part.type) {
@@ -306,7 +315,7 @@ export function toOpenAIChatCompletionStream<TOOLS extends ToolSet>(
         }
       } catch (err) {
         try {
-          emit(errorFrame(err));
+          emit(errorFrame(GENERIC_ERROR));
         } catch {}
         errored = true;
         streamError = err;

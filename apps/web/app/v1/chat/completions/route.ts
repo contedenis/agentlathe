@@ -4,6 +4,7 @@ import {
   loadActiveAgent,
   openAIMessagesToModelMessages,
   type RunRecorder,
+  runTimeout,
   toOpenAIChatCompletion,
   toOpenAIChatCompletionStream,
 } from "@agentlathe/runner";
@@ -115,6 +116,7 @@ export async function POST(req: Request) {
       const result = await runtime.stream({
         messages,
         abortSignal: abort.signal,
+        timeout: runTimeout(),
       });
       return toOpenAIChatCompletionStream(
         result.fullStream,
@@ -154,6 +156,7 @@ export async function POST(req: Request) {
     const result = await runtime.generate({
       messages,
       abortSignal: req.signal,
+      timeout: runTimeout(),
     });
     generated = true;
     await recorder.record({ stats: stats() });

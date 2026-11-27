@@ -242,6 +242,95 @@ describe("queries (requires Docker)", () => {
     });
   });
 
+  describe("the review queue", () => {
+    const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 12, minute));
+    const emptyFilter = {
+      q: "",
+      source: "",
+      subject: "",
+      evaluation: "" as const,
+      agent: "",
+      attention: false,
+    };
+
+    async function seedQueue(tag: string) {
+      const agent = await makeAgent(`queue agent ${tag}`);
+      const other = await makeAgent(`queue bystander ${tag}`);
+      const ok = await makeRun(agent.id, { createdAt: at(1) });
+      const failed = await makeRun(agent.id, {
+        createdAt: at(2),
+        status: "error",
+      });
+      const noted = await makeRun(agent.id, { createdAt: at(3) });
+      await makeDraft(noted.id);
+      const closed = await makeRun(agent.id, { createdAt: at(4) });
+      await makeDraft(closed.id, { status: "applied" });
+      const elsewhere = await makeRun(other.id, {
+        createdAt: at(5),
+        status: "error",
+      });
+      return { agent, ok, failed, noted, closed, elsewhere };
+    }
+
+    it("filters by agent, and by runs that failed or carry an open note", async () => {
+      const { agent, ok, failed, noted, closed } = await seedQueue(
+        crypto.randomUUID(),
+      );
+
+      const ofAgent = await queries.listRunsPage({
+        agent: agent.id,
+        limit: 50,
+        offset: 0,
+      });
+      expect(ofAgent.rows.map((row) => row.id)).toEqual([
+        closed.id,
+        noted.id,
+        failed.id,
+        ok.id,
+      ]);
+
+      const attention = await queries.listRunsPage({
+        agent: agent.id,
+        attention: true,
+        limit: 50,
+        offset: 0,
+      });
+      expect(attention.total).toBe(2);
+      expect(attention.rows.map((row) => row.id)).toEqual([
+        noted.id,
+        failed.id,
+      ]);
+    });
+
+    it("finds the newer and the older run inside the same filter", async () => {
+      const { agent, ok, failed, noted, closed } = await seedQueue(
+        crypto.randomUUID(),
+      );
+      const queue = { ...emptyFilter, agent: agent.id, attention: true };
+
+      expect(await queries.getRunNeighbors(failed.id, queue)).toEqual({
+        newerId: noted.id,
+        olderId: null,
+      });
+      expect(await queries.getRunNeighbors(noted.id, queue)).toEqual({
+        newerId: null,
+        olderId: failed.id,
+      });
+      expect(
+        await queries.getRunNeighbors(noted.id, {
+          ...emptyFilter,
+          agent: agent.id,
+        }),
+      ).toEqual({ newerId: closed.id, olderId: failed.id });
+      expect(
+        await queries.getRunNeighbors(ok.id, {
+          ...emptyFilter,
+          agent: agent.id,
+        }),
+      ).toEqual({ newerId: failed.id, olderId: null });
+    });
+  });
+
   describe("getRunForReview", () => {
     it("returns undefined for a non-uuid id", async () => {
       expect(await queries.getRunForReview("not-a-uuid")).toBeUndefined();
@@ -465,7 +554,7 @@ describe("queries (requires Docker)", () => {
       expect(after.counts.runs).toBe(before.counts.runs + 1);
     });
 
-    it("needsReview includes error runs and runs with an open draft, but not a plain ok run or a dismissed-only draft", async () => {
+    it("needsAttention includes error runs and runs with an open draft, but not a plain ok run or a dismissed-only draft", async () => {
       const before = await queries.getDashboardData();
 
       const agent = await makeAgent("dashboard needs review agent");
@@ -480,15 +569,15 @@ describe("queries (requires Docker)", () => {
       const cleanRun = await makeRun(agent.id);
 
       const after = await queries.getDashboardData();
-      const ids = after.needsReview.map((row) => row.id);
+      const ids = after.needsAttention.map((row) => row.id);
 
       expect(ids).toContain(errorRun.id);
       expect(ids).toContain(openDraftRun.id);
       expect(ids).not.toContain(dismissedDraftRun.id);
       expect(ids).not.toContain(cleanRun.id);
-      expect(after.needsReviewCount).toBe(before.needsReviewCount + 2);
+      expect(after.needsAttentionCount).toBe(before.needsAttentionCount + 2);
 
-      const reviewRow = after.needsReview.find(
+      const reviewRow = after.needsAttention.find(
         (row) => row.id === openDraftRun.id,
       );
       expect(reviewRow?.openDrafts).toBe(1);

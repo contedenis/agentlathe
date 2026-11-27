@@ -129,7 +129,13 @@ describe("generateWithApprovals against the real SDK", () => {
       memoryWrites: [],
     };
     vi.mocked(buildTools).mockImplementation(
-      async (_agentId, _ctx, _buildSubAgentRuntime, onChildStats) => ({
+      async (
+        _agentId,
+        _contextLimit,
+        _ctx,
+        _buildSubAgentRuntime,
+        onChildStats,
+      ) => ({
         tools: {
           delegate: tool({
             description: "a sub-agent",

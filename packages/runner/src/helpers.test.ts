@@ -145,6 +145,25 @@ describe("getContextLimit", () => {
     await expect(getContextLimit("unknown/model")).resolves.toBe(128_000);
   });
 
+  it("uses CONTEXT_LIMIT_FALLBACK for a model absent from the catalog, and ignores a value that is not a positive integer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          okResponse({ data: [{ id: "known", context_length: 400_000 }] }),
+        ),
+    );
+
+    vi.stubEnv("CONTEXT_LIMIT_FALLBACK", "8192");
+    await expect(getContextLimit("local/llama")).resolves.toBe(8192);
+    await expect(getContextLimit("known")).resolves.toBe(400_000);
+
+    vi.stubEnv("CONTEXT_LIMIT_FALLBACK", "lots");
+    await expect(getContextLimit("local/llama")).resolves.toBe(128_000);
+    vi.unstubAllEnvs();
+  });
+
   it("caches: a second call does not re-invoke fetch", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
@@ -194,6 +213,38 @@ describe("getContextLimit", () => {
     await expect(getContextLimit("anthropic/claude-opus-4.8")).resolves.toBe(
       128_000,
     );
+  });
+
+  it("refreshes the catalog after an hour, and keeps the old one when the refresh fails", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const catalog = (limit: number) =>
+        okResponse({ data: [{ id: "new/model", context_length: limit }] });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(catalog(8_000))
+        .mockResolvedValueOnce(catalog(32_000))
+        .mockRejectedValueOnce(new Error("network down"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(getContextLimit("new/model")).resolves.toBe(8_000);
+      vi.setSystemTime(59 * 60 * 1000);
+      await expect(getContextLimit("new/model")).resolves.toBe(8_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(61 * 60 * 1000);
+      await expect(getContextLimit("new/model")).resolves.toBe(8_000);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      await expect(getContextLimit("new/model")).resolves.toBe(32_000);
+
+      vi.setSystemTime(122 * 60 * 1000);
+      await expect(getContextLimit("new/model")).resolves.toBe(32_000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      await expect(getContextLimit("new/model")).resolves.toBe(32_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a failed fetch is NOT cached: it retries after the 60s cooldown and caches the success", async () => {

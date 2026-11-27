@@ -7,6 +7,10 @@ import {
   tools,
 } from "@agentlathe/db";
 import {
+  CHARS_PER_TOKEN,
+  TOOL_RESULT_CONTEXT_SHARE,
+} from "@agentlathe/db/constants";
+import {
   createMCPClient,
   type ListToolsResult,
   type MCPClient,
@@ -16,7 +20,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { type ApprovalStrategy, buildHeadlessToolApproval } from "./approval";
 import { MAX_DEPTH, type RuntimeCtx } from "./context";
-import { addTool, addToolWithApproval, buildAuth } from "./helpers";
+import { addTool, addToolWithApproval, buildAuth, runTimeout } from "./helpers";
 import { compileInputSchema, describeSchemaErrors } from "./input-schema";
 import { loadMcpServers, loadSubAgents, type McpServerGroup } from "./loaders";
 import type { AgentRunStats } from "./recording";
@@ -29,8 +33,15 @@ export type ToolKind =
   | "memory"
   | "knowledge";
 
-const MAX_TOOL_RESPONSE_BYTES = 256 * 1024;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TRUNCATION_SUFFIX = "[truncated]";
+
+function toolResultLimit(contextLimit: number): number {
+  return Math.min(
+    Math.floor(contextLimit * TOOL_RESULT_CONTEXT_SHARE) * CHARS_PER_TOKEN,
+    MAX_RESPONSE_BYTES,
+  );
+}
 const HTTP_TOOL_TIMEOUT_MS = 30_000;
 
 async function readCappedText(
@@ -88,7 +99,9 @@ export async function loadHttpToolRows(
 
 export async function loadHttpTools(
   agentId: string,
+  contextLimit: number,
 ): Promise<{ tools: ToolSet; approvalToolNames: Set<string> }> {
+  const resultLimit = toolResultLimit(contextLimit);
   const rows = await loadHttpToolRows(agentId);
   const result: ToolSet = {};
   const approvalToolNames = new Set<string>();
@@ -143,7 +156,7 @@ export async function loadHttpTools(
             });
             outcome = {
               res,
-              body: await readCappedText(res, MAX_TOOL_RESPONSE_BYTES),
+              body: await readCappedText(res, resultLimit),
             };
           } catch (err) {
             // A cancelled run is not a tool failure: the caller's abort propagates untouched.
@@ -192,17 +205,61 @@ type ToolWithExecute = {
   execute?: (input: unknown, options: unknown) => unknown;
 };
 
-function withCallTimeout(toolDef: ToolSet[string]): ToolSet[string] {
+function capMcpResult(result: unknown, limit: number): unknown {
+  const serialized = JSON.stringify(result) ?? "";
+  if (serialized.length <= limit) return result;
+  const truncatedText = (text: string) => ({
+    type: "text",
+    text: `${text}${TRUNCATION_SUFFIX}`,
+  });
+  const { content, isError } = (
+    result && typeof result === "object" ? result : {}
+  ) as { content?: unknown; isError?: unknown };
+  const flags = typeof isError === "boolean" ? { isError } : {};
+  if (!Array.isArray(content))
+    return {
+      ...flags,
+      content: [truncatedText(serialized.slice(0, limit))],
+    };
+
+  const capped: unknown[] = [];
+  let remaining = limit;
+  let marked = false;
+  for (const part of content) {
+    const size = JSON.stringify(part)?.length ?? 0;
+    if (size <= remaining) {
+      capped.push(part);
+      remaining -= size;
+      continue;
+    }
+    const text = (part as { type?: unknown; text?: unknown } | null)?.text;
+    capped.push(
+      truncatedText(typeof text === "string" ? text.slice(0, remaining) : ""),
+    );
+    marked = true;
+    break;
+  }
+  if (!marked) capped.push(truncatedText(""));
+  return { ...flags, content: capped };
+}
+
+function withCallTimeout(
+  toolDef: ToolSet[string],
+  resultLimit: number,
+): ToolSet[string] {
   const execute = (toolDef as ToolWithExecute).execute;
   if (!execute) return toolDef;
   return {
     ...toolDef,
     // Thrown, not returned: the model still gets the text and the call records as an error.
     execute: async (input: unknown, options: unknown) =>
-      withTimeout(
-        Promise.resolve(execute(input, options)),
-        MCP_CALL_TIMEOUT_MS,
-        "MCP tool call timed out",
+      capMcpResult(
+        await withTimeout(
+          Promise.resolve(execute(input, options)),
+          MCP_CALL_TIMEOUT_MS,
+          "MCP tool call timed out",
+        ),
+        resultLimit,
       ),
   } as ToolSet[string];
 }
@@ -215,19 +272,48 @@ function withMcpConnectTimeout<T>(promise: Promise<T>): Promise<T> {
   );
 }
 
+const boundedFetch: typeof fetch = async (input, init) => {
+  const res = await fetch(input, init);
+  if (init?.method !== "POST" || !res.body) return res;
+  let received = 0;
+  const body = res.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        received += chunk.length;
+        if (received > MAX_RESPONSE_BYTES)
+          controller.error(
+            new Error(
+              `The MCP server's response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024} MB.`,
+            ),
+          );
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+};
+
 function connectMcpClient(
   serverUrl: string,
   authConfig: unknown,
 ): Promise<MCPClient> {
-  return withMcpConnectTimeout(
-    createMCPClient({
-      transport: {
-        type: "http",
-        url: serverUrl,
-        headers: buildAuth(authConfig),
-      },
-    }),
-  );
+  const connecting = createMCPClient({
+    transport: {
+      type: "http",
+      url: serverUrl,
+      headers: buildAuth(authConfig),
+      fetch: boundedFetch,
+    },
+  });
+  return withMcpConnectTimeout(connecting).catch((err) => {
+    if (err instanceof McpTimeoutError)
+      void connecting.then((client) => client.close()).catch(() => {});
+    throw err;
+  });
 }
 
 async function withMcpClient<T>(
@@ -244,7 +330,10 @@ async function withMcpClient<T>(
 }
 
 // Returns the client open: the tools execute through it; the runtime closes it in cleanup.
-async function connectMcp(conn: McpServerGroup): Promise<{
+async function connectMcp(
+  conn: McpServerGroup,
+  resultLimit: number,
+): Promise<{
   tools: ToolSet;
   approvalNames: Set<string>;
   client: MCPClient;
@@ -262,8 +351,11 @@ async function connectMcp(conn: McpServerGroup): Promise<{
         missing.push(name);
         continue;
       }
-      const finalName = mcpToolName(conn.name, name);
-      selected[finalName] = withCallTimeout(mcpTool);
+      const finalName = addTool(
+        selected,
+        mcpToolName(conn.name, name),
+        withCallTimeout(mcpTool, resultLimit),
+      );
       if (conn.approvalToolNames.includes(name)) approvalNames.add(finalName);
     }
     return { tools: selected, approvalNames, client, missing };
@@ -283,14 +375,20 @@ export async function discoverMcpTools(server: {
   });
 }
 
-export async function loadMcpTools(agentId: string): Promise<{
+export async function loadMcpTools(
+  agentId: string,
+  contextLimit: number,
+): Promise<{
   tools: ToolSet;
   approvalToolNames: Set<string>;
   failed: string[];
   clients: MCPClient[];
 }> {
   const servers = await loadMcpServers(agentId);
-  const settled = await Promise.allSettled(servers.map(connectMcp));
+  const resultLimit = toolResultLimit(contextLimit);
+  const settled = await Promise.allSettled(
+    servers.map((conn) => connectMcp(conn, resultLimit)),
+  );
 
   const merged: ToolSet = {};
   const approvalToolNames = new Set<string>();
@@ -338,6 +436,7 @@ export type BuildSubAgentRuntime = (
     generate: (options: {
       prompt: string;
       abortSignal?: AbortSignal;
+      timeout?: { totalMs: number };
     }) => Promise<{ text: string }>;
   };
   cleanup: () => Promise<void>;
@@ -381,7 +480,11 @@ export async function buildSubAgentTools(
           { buildApproval: buildHeadlessToolApproval },
         );
         try {
-          const output = await agent.generate({ prompt: task, abortSignal });
+          const output = await agent.generate({
+            prompt: task,
+            abortSignal,
+            timeout: runTimeout(),
+          });
           return output.text;
         } finally {
           await cleanup();
@@ -396,6 +499,7 @@ export async function buildSubAgentTools(
 
 export async function buildTools(
   agentId: string,
+  contextLimit: number,
   ctx: RuntimeCtx,
   buildSubAgentRuntime: BuildSubAgentRuntime,
   onChildStats?: (stats: AgentRunStats) => void,
@@ -407,8 +511,8 @@ export async function buildTools(
   cleanup: () => Promise<void>;
 }> {
   const [httpOutcome, mcpOutcome, subAgentOutcome] = await Promise.allSettled([
-    loadHttpTools(agentId),
-    loadMcpTools(agentId),
+    loadHttpTools(agentId, contextLimit),
+    loadMcpTools(agentId, contextLimit),
     buildSubAgentTools(agentId, ctx, buildSubAgentRuntime, onChildStats),
   ]);
   // A sibling failure must not leak the MCP clients that already connected.

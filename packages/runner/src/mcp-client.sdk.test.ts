@@ -42,6 +42,15 @@ const SERVER_TOOLS = [
       required: ["a", "b"],
     },
   },
+  {
+    name: "flood",
+    description: "Returns as many characters as asked.",
+    inputSchema: {
+      type: "object",
+      properties: { bytes: { type: "number" } },
+      required: ["bytes"],
+    },
+  },
 ];
 
 // The MCP protocol versions this repo's own server route negotiates.
@@ -63,6 +72,10 @@ function callTool(name: string, args: Record<string, unknown>) {
       content: [
         { type: "text", text: String(Number(args.a) + Number(args.b)) },
       ],
+    };
+  if (name === "flood")
+    return {
+      content: [{ type: "text", text: "x".repeat(Number(args.bytes)) }],
     };
   return null;
 }
@@ -181,7 +194,7 @@ describe("discoverMcpTools against a real Streamable HTTP MCP server", () => {
   it("completes the handshake and returns the server's tool definitions", async () => {
     const discovered = await discoverMcpTools({ serverUrl, authConfig: null });
 
-    expect(discovered.map((t) => t.name)).toEqual(["echo", "add"]);
+    expect(discovered.map((t) => t.name)).toEqual(["echo", "add", "flood"]);
     expect(discovered[0]).toMatchObject({
       name: "echo",
       description: "Echoes the message back.",
@@ -237,8 +250,10 @@ describe("loadMcpTools against a real Streamable HTTP MCP server", () => {
   it("exposes the selected tools under their prefixed names and runs one end to end", async () => {
     stubServer();
 
-    const { tools, approvalToolNames, failed, clients } =
-      await loadMcpTools("agent-1");
+    const { tools, approvalToolNames, failed, clients } = await loadMcpTools(
+      "agent-1",
+      128_000,
+    );
     try {
       expect(Object.keys(tools).sort()).toEqual([
         "weather__add",
@@ -270,10 +285,39 @@ describe("loadMcpTools against a real Streamable HTTP MCP server", () => {
     }
   });
 
+  const flood = async (contextLimit: number, bytes: number) => {
+    stubServer({ toolNames: ["flood"] });
+    const { tools, clients } = await loadMcpTools("agent-1", contextLimit);
+    try {
+      return await (
+        tools.weather__flood as unknown as {
+          execute: (input: unknown, options: unknown) => Promise<unknown>;
+        }
+      ).execute({ bytes }, { toolCallId: "call-1", messages: [] });
+    } finally {
+      await Promise.allSettled(clients.map((client) => client.close()));
+    }
+  };
+
+  it("a result over a quarter of the model's context is cut and marked", async () => {
+    const output = (await flood(8_000, 50_000)) as {
+      content: Array<{ text: string }>;
+    };
+
+    expect(output.content[0].text.endsWith("[truncated]")).toBe(true);
+    expect(JSON.stringify(output).length).toBeLessThan(8_200);
+  });
+
+  it("a response over 8 MB is refused while it is read, whatever the model", async () => {
+    await expect(flood(100_000_000, 9 * 1024 * 1024)).rejects.toThrow(
+      "exceeded 8 MB",
+    );
+  });
+
   it("a tool the server no longer offers is reported in failed, the rest still load", async () => {
     stubServer({ toolNames: ["echo", "gone"] });
 
-    const { tools, failed, clients } = await loadMcpTools("agent-1");
+    const { tools, failed, clients } = await loadMcpTools("agent-1", 128_000);
     try {
       expect(Object.keys(tools)).toEqual(["weather__echo"]);
       expect(failed).toEqual(["weather (tools no longer offered: gone)"]);
@@ -294,7 +338,7 @@ describe("loadMcpTools against a real Streamable HTTP MCP server", () => {
       },
     ]);
 
-    const { tools, failed, clients } = await loadMcpTools("agent-1");
+    const { tools, failed, clients } = await loadMcpTools("agent-1", 128_000);
 
     expect(tools).toEqual({});
     expect(failed).toEqual(["down"]);

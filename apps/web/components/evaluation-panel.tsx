@@ -333,7 +333,7 @@ export function EvaluationPanel({
             <>
               No criteria for this agent yet.{" "}
               <Link
-                href={`/agents/${agentId}`}
+                href={`/agents/${agentId}?tab=evaluation`}
                 className="text-primary hover:underline"
               >
                 Add one on the agent page

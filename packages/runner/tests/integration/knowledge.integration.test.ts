@@ -64,11 +64,12 @@ async function seed(url: string) {
       collectionId: string,
       filename: string,
       text: string,
+      status = "ready",
     ) =>
       insert(
         `insert into knowledge_documents (id, collection_id, filename, media_type, size, text, chars, status, embedding_model)
-         values ($1, $2, $3, 'text/markdown', 1, $4, $5, 'ready', 'test/embed') returning id`,
-        [id, collectionId, filename, text, text.length],
+         values ($1, $2, $3, 'text/markdown', 1, $4, $5, $6, 'test/embed') returning id`,
+        [id, collectionId, filename, text, text.length, status],
       );
     const chunk = (
       documentId: string,
@@ -116,6 +117,14 @@ async function seed(url: string) {
       [1, 2, 3],
     );
     await chunk(ids.otherDoc, 0, "Gifts gifts gifts.");
+    await document(
+      ids.partialDoc,
+      ids.Policies,
+      "partial.md",
+      "Gifts over $250 half written.",
+      "processing",
+    );
+    await chunk(ids.partialDoc, 0, "Gifts over $250 half written.");
 
     await pool.query(
       "insert into agents (id, name, slug, model) values ($1, 'Reader', 'reader', 'test/model')",
@@ -175,6 +184,7 @@ describe("knowledge search (requires Docker)", () => {
       "otherDoc",
       "handbookDoc",
       "hugeDoc",
+      "partialDoc",
       "agent",
     ])
       ids[key] = crypto.randomUUID();
@@ -224,6 +234,7 @@ describe("knowledge search (requires Docker)", () => {
     expect(texts).not.toContain("Gifts over $250 stale vector.");
     expect(texts).not.toContain("Gifts wrong size.");
     expect(texts).not.toContain("Gifts gifts gifts.");
+    expect(texts).not.toContain("Gifts over $250 half written.");
   });
 
   it("searches nothing without collections", async () => {

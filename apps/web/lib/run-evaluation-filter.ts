@@ -8,7 +8,7 @@ export type EvaluationFilter = (typeof EVALUATION_FILTERS)[number];
 
 export const EVALUATION_FILTER_LABEL: Record<EvaluationFilter, string> = {
   needs_review: "Needs review",
-  failed: "Failed",
+  failed: "Failed a criterion",
   not_evaluated: "Not evaluated",
 };
 

@@ -69,6 +69,12 @@ The [`Dockerfile`](../Dockerfile) is a multi-stage build with two consumable tar
 
 **This is not a Vercel deployment.** It needs a persistent Postgres it owns (not just any connection string — the TTL sweeps, the run recorder and the migration story assume it) and a long-lived process: streaming completions, MCP clients held open for the duration of a run, MCP approval elicitations that block on a human, run evaluations and knowledge documents that are processed in the background after the response has gone out, and the [scheduler](#the-scheduler). A container platform (Docker Compose, Fly, Railway, a VM, Kubernetes) fits; a serverless function does not.
 
+**With several replicas, pin each MCP client to one.** An approval asked through MCP elicitation is held in the memory of the process that is running the agent, and the client's answer is a separate request. Behind a load balancer that request can reach another replica, which knows nothing about it: the approval is then denied after two minutes. Use sticky sessions, or serve `/mcp` from a single process. `/v1` and the dashboard are not affected.
+
+**Runs are stopped after 30 minutes.** `RUN_TIMEOUT_SECONDS` is how long a run may take before it is stopped and recorded as failed, 1800 by default; raise it for agents that legitimately run longer. Compose reads it from `.env`.
+
+**An endpoint that reports no context sizes needs `CONTEXT_LIMIT_FALLBACK`.** It is the context size, in tokens, assumed for a model whose size the provider's `/models` does not report (Ollama, LiteLLM, vLLM), 128,000 by default. Set it to your smallest such model's context, or long conversations on it end in a provider error instead of being trimmed. Compose reads it from `.env`.
+
 ## The scheduler
 
 Every app process runs a scheduler loop alongside the server: every 30 seconds it starts the [schedules](USAGE.md#schedules) that are due and picks up [knowledge documents](#knowledge-processing) waiting to be processed, and every ten minutes or so it sweeps expired runs and transcripts. There is no separate worker to deploy.

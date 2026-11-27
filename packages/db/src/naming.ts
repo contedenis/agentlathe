@@ -29,16 +29,33 @@ export const RESERVED_TOOL_NAMES = [
   "search_knowledge",
 ] as const;
 
+export const TOOL_NAME_MAX_LENGTH = 64;
+
+function shortHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function capToolName(name: string): string {
+  if (name.length <= TOOL_NAME_MAX_LENGTH) return name;
+  const digest = shortHash(name);
+  return `${name.slice(0, TOOL_NAME_MAX_LENGTH - digest.length - 1)}_${digest}`;
+}
+
 export function httpToolName(name: string): string {
-  return slug(name) || "tool";
+  return capToolName(slug(name) || "tool");
 }
 
 export function mcpToolName(serverName: string, toolName: string): string {
-  return `${slug(serverName)}__${toolName}`;
+  return capToolName(`${slug(serverName)}__${toolName}`);
 }
 
 export function subAgentToolName(agentSlugValue: string): string {
-  return `subagent_${slug(agentSlugValue)}`;
+  return capToolName(`subagent_${slug(agentSlugValue)}`);
 }
 
 export function agentAskToolName(agentSlugValue: string): string {

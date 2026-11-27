@@ -5,6 +5,7 @@ import {
   buildHeadlessToolApproval,
 } from "./approval";
 import type { RunContext } from "./context";
+import { runTimeout } from "./helpers";
 import type { AgentRow } from "./loaders";
 import { type AgentRunStats, describeCall } from "./recording";
 import { buildAgentRuntime } from "./runtime";
@@ -83,6 +84,7 @@ export async function generateWithApprovals(
       const result = await runtime.generate({
         messages,
         abortSignal,
+        timeout: runTimeout(),
         onToolExecutionStart: ({ toolCall }) =>
           report(`Executing ${toolCall.toolName}`),
       });

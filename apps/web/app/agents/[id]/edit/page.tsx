@@ -1,3 +1,4 @@
+import { fallbackContextLimit } from "@agentlathe/runner";
 import { notFound } from "next/navigation";
 import { AgentForm } from "@/components/forms/agent-form";
 import { PageHeader } from "@/components/page-header";
@@ -36,6 +37,7 @@ export default async function EditAgentPage({
         catalogs={catalogs}
         collections={collections}
         models={models}
+        contextFallback={fallbackContextLimit()}
         initial={{
           id: agent.id,
           name: agent.name,

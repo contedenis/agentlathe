@@ -68,7 +68,7 @@ function runsByDay(daily: { day: string; runs: number }[]) {
 }
 
 export default async function Home() {
-  const { counts, needsReview, needsReviewCount, agentIssues, activity } =
+  const { counts, needsAttention, needsAttentionCount, agentIssues, activity } =
     await getDashboardData();
 
   const attentionCount = agentIssues.length;
@@ -192,35 +192,35 @@ export default async function Home() {
         <section className="overflow-hidden rounded-lg border bg-card">
           <header className="flex items-center justify-between border-b px-4 py-[13px]">
             <h2 className="text-[13.5px] font-semibold tracking-[-0.01em]">
-              <MetricHint label="Runs to review">
-                Calls that failed, or that somebody left an open note on. This
-                is about what happened when the agent ran, not about how it is
+              <MetricHint label="Needs attention">
+                Runs that failed, or that somebody left an open note on. This is
+                about what happened when the agent ran, not about how it is
                 configured.
               </MetricHint>
             </h2>
             <div className="flex items-center gap-2">
               <span className="font-mono text-[11px] text-faint">
-                {needsReviewCount}
+                {needsAttentionCount}
               </span>
               <Link
-                href="/runs"
+                href="/runs?attention=1"
                 className="inline-flex items-center gap-[3px] text-[12px] text-primary hover:underline"
               >
-                All runs
+                Open the queue
                 <ArrowUpRightIcon className="size-3" />
               </Link>
             </div>
           </header>
-          {needsReview.length === 0 ? (
+          {needsAttention.length === 0 ? (
             <p className="px-4 py-8 text-center text-[13px] text-muted-foreground">
-              Nothing to review — no failed runs and no open notes.
+              Nothing needs attention — no failed runs and no open notes.
             </p>
           ) : (
             <ul className="divide-y">
-              {needsReview.map((run) => (
+              {needsAttention.map((run) => (
                 <li key={run.id}>
                   <Link
-                    href={`/runs/${run.id}`}
+                    href={`/runs/${run.id}?attention=1`}
                     className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
                   >
                     <div className="min-w-0 flex-1">

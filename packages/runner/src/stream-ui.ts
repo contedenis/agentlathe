@@ -7,6 +7,7 @@ import {
 } from "ai";
 import { buildDashboardToolApproval } from "./approval";
 import type { RunContext } from "./context";
+import { runTimeout } from "./helpers";
 import type { AgentRow } from "./loaders";
 import { type AgentRunStats, deniedApprovalCalls } from "./recording";
 import { buildAgentRuntime } from "./runtime";
@@ -48,6 +49,7 @@ export async function streamAgentForUI(
     const startedAt = Date.now();
     let streamError: unknown;
     const toolErrors = new Set<unknown>();
+    const timeout = AbortSignal.timeout(runTimeout().totalMs);
     // The run row exists only after the turn ends, mid-stream: it cannot travel in a header.
     let resolveRunId: (id: string | null) => void = () => {};
     const runId = new Promise<string | null>((resolve) => {
@@ -60,7 +62,9 @@ export async function streamAgentForUI(
     const agentStream = await createAgentUIStream({
       agent: runtime,
       uiMessages: messages,
-      abortSignal,
+      abortSignal: abortSignal
+        ? AbortSignal.any([abortSignal, timeout])
+        : timeout,
       // Without this the transcript stops sharing ids with the chat and an annotation
       // can no longer anchor to the stored turn.
       generateMessageId: () => crypto.randomUUID(),
@@ -74,7 +78,8 @@ export async function streamAgentForUI(
               calls: [...turnStats.calls, ...inputDenials],
             },
             durationMs: Date.now() - startedAt,
-            error: streamError,
+            error:
+              streamError ?? (timeout.aborted ? timeout.reason : undefined),
           });
           resolveRunId(typeof recorded === "string" ? recorded : null);
           // An approval continuation extends the last request message in place: it is this run's output.
@@ -116,6 +121,11 @@ export async function streamAgentForUI(
         writer.merge(agentStream as ReadableStream<AgentUIMessageChunk>);
         const id = await runId;
         if (id) writer.write({ type: "data-run", data: { runId: id } });
+        if (timeout.aborted)
+          writer.write({
+            type: "error",
+            errorText: "The run exceeded its time limit.",
+          });
       },
       onError: () => "An error occurred.",
     });

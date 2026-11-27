@@ -23,6 +23,7 @@ import {
   type EvaluationFilter,
 } from "@/lib/run-evaluation-filter";
 import { SOURCE_LABEL, SOURCE_ORDER, sourceLabel } from "@/lib/run-sources";
+import { type RunsFilter, runsFilterQuery } from "@/lib/runs-filter";
 import { cn } from "@/lib/utils";
 
 type RunRow = Awaited<ReturnType<typeof listRunsPage>>["rows"][number];
@@ -108,51 +109,35 @@ const EVALUATION_OPTIONS: { value: EvaluationFilter | ""; label: string }[] = [
 export function RunsList({
   runs,
   total,
-  query,
-  source,
-  subject,
-  evaluation,
+  filter,
+  agentName,
   needsReviewTotal,
   page,
   pageSize,
 }: {
   runs: RunRow[];
   total: number;
-  query: string;
-  source: string;
-  subject: string;
-  evaluation: EvaluationFilter | "";
+  filter: RunsFilter;
+  agentName: string | null;
   needsReviewTotal: number;
   page: number;
   pageSize: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [value, setValue] = useState(query);
+  const { source, subject, evaluation } = filter;
+  const [value, setValue] = useState(filter.q);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function hrefFor(
-    nextQuery: string,
-    nextSource: string,
-    nextEvaluation: EvaluationFilter | "",
-    nextPage: number,
-    nextSubject = subject,
-  ) {
-    const params = new URLSearchParams();
-    if (nextQuery.trim()) params.set("q", nextQuery.trim());
-    if (nextSource) params.set("source", nextSource);
-    if (nextSubject) params.set("subject", nextSubject);
-    if (nextEvaluation) params.set("evaluation", nextEvaluation);
-    if (nextPage > 1) params.set("page", String(nextPage));
-    const qs = params.toString();
-    return qs ? `${pathname}?${qs}` : pathname;
+  function hrefFor(changes: Partial<RunsFilter>, nextPage = 1) {
+    return `${pathname}${runsFilterQuery({ ...filter, ...changes }, nextPage)}`;
   }
 
   function onSearch(next: string) {
     setValue(next);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(
-      () => router.replace(hrefFor(next, source, evaluation, 1)),
+      () => router.replace(hrefFor({ q: next.trim() })),
       300,
     );
   }
@@ -180,9 +165,7 @@ export function RunsList({
               variant={source === option.value ? "secondary" : "ghost"}
               size="sm"
               nativeButton={false}
-              render={
-                <Link href={hrefFor(query, option.value, evaluation, 1)} />
-              }
+              render={<Link href={hrefFor({ source: option.value })} />}
             >
               {option.label}
             </Button>
@@ -195,7 +178,7 @@ export function RunsList({
               variant={evaluation === option.value ? "secondary" : "ghost"}
               size="sm"
               nativeButton={false}
-              render={<Link href={hrefFor(query, source, option.value, 1)} />}
+              render={<Link href={hrefFor({ evaluation: option.value })} />}
             >
               {option.label}
               {option.value === "needs_review" && needsReviewTotal > 0 && (
@@ -206,12 +189,47 @@ export function RunsList({
             </Button>
           ))}
         </FilterGroup>
+        <FilterGroup label="Run">
+          {[
+            { attention: false, label: "All" },
+            { attention: true, label: "Needs attention" },
+          ].map((option) => (
+            <Button
+              key={option.label}
+              variant={
+                filter.attention === option.attention ? "secondary" : "ghost"
+              }
+              size="sm"
+              nativeButton={false}
+              title={
+                option.attention
+                  ? "Runs that failed, or that carry an open note"
+                  : undefined
+              }
+              render={<Link href={hrefFor({ attention: option.attention })} />}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </FilterGroup>
+        {filter.agent && (
+          <Button
+            variant="secondary"
+            size="sm"
+            nativeButton={false}
+            render={<Link href={hrefFor({ agent: "" })} />}
+            aria-label={`Clear agent filter ${agentName ?? ""}`}
+          >
+            Agent <span className="font-medium">{agentName ?? "deleted"}</span>
+            <XIcon />
+          </Button>
+        )}
         {subject && (
           <Button
             variant="secondary"
             size="sm"
             nativeButton={false}
-            render={<Link href={hrefFor(query, source, evaluation, 1, "")} />}
+            render={<Link href={hrefFor({ subject: "" })} />}
             aria-label={`Clear subject filter ${subject}`}
           >
             Subject <span className="font-mono text-[12px]">{subject}</span>
@@ -252,7 +270,7 @@ export function RunsList({
               <TableRow key={run.id}>
                 <TableCell>
                   <Link
-                    href={`/runs/${run.id}`}
+                    href={`/runs/${run.id}${runsFilterQuery(filter)}`}
                     className="font-mono text-[12px] font-medium hover:underline"
                   >
                     {run.createdAt?.toLocaleString("en-US") ?? "—"}
@@ -267,13 +285,7 @@ export function RunsList({
                   </Link>
                   {run.subjectId && (
                     <Link
-                      href={hrefFor(
-                        query,
-                        source,
-                        evaluation,
-                        1,
-                        run.subjectId,
-                      )}
+                      href={hrefFor({ subject: run.subjectId })}
                       className="block font-mono text-[11px] text-faint hover:underline"
                     >
                       {run.subjectId}
@@ -319,9 +331,7 @@ export function RunsList({
             // Disabled it stays a real button; enabled it renders an anchor.
             nativeButton={page <= 1}
             render={
-              page > 1 ? (
-                <Link href={hrefFor(query, source, evaluation, page - 1)} />
-              ) : undefined
+              page > 1 ? <Link href={hrefFor({}, page - 1)} /> : undefined
             }
           >
             Previous
@@ -333,7 +343,7 @@ export function RunsList({
             nativeButton={page >= totalPages}
             render={
               page < totalPages ? (
-                <Link href={hrefFor(query, source, evaluation, page + 1)} />
+                <Link href={hrefFor({}, page + 1)} />
               ) : undefined
             }
           >

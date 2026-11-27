@@ -1,5 +1,9 @@
 import { renderMemorySection } from "@agentlathe/runner";
-import { TriangleAlertIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -11,23 +15,60 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { VersionConfigDialog } from "@/components/version-dialogs";
 import { toFixDrafts } from "@/lib/fix-drafts";
 import { formatInZone } from "@/lib/format";
-import { getRunForReview } from "@/lib/queries";
+import { getRunForReview, getRunNeighbors } from "@/lib/queries";
 import { getMemoryLoaded, getRunMemoryChanges } from "@/lib/queries-memory";
 import { sourceLabel } from "@/lib/run-sources";
+import {
+  hasRunsFilter,
+  parseRunsFilter,
+  type RunsFilter,
+  runsFilterQuery,
+} from "@/lib/runs-filter";
 import { toTranscriptMessages } from "@/lib/transcript";
 import { readSnapshot } from "@/lib/version-diff";
 
+function QueueLink({
+  href,
+  label,
+  children,
+}: {
+  href: string | null;
+  label: string;
+  children: React.ReactNode;
+}) {
+  const className = "rounded-md border p-1";
+  return href ? (
+    <Link
+      href={href}
+      aria-label={label}
+      title={label}
+      className={`${className} text-muted-foreground transition-colors hover:text-foreground`}
+    >
+      {children}
+    </Link>
+  ) : (
+    <span aria-hidden className={`${className} text-faint opacity-40`}>
+      {children}
+    </span>
+  );
+}
+
 export default async function RunDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Partial<Record<keyof RunsFilter, string>>>;
 }) {
   const { id } = await params;
   const run = await getRunForReview(id);
   if (!run) notFound();
-  const [memoryLoaded, memoryChanges] = await Promise.all([
+  const queue = parseRunsFilter(await searchParams);
+  const queueQuery = runsFilterQuery(queue);
+  const [memoryLoaded, memoryChanges, neighbors] = await Promise.all([
     getMemoryLoaded(run.memorySeen),
     getRunMemoryChanges(run.id),
+    getRunNeighbors(run.id, queue),
   ]);
   const memoryStores = memoryLoaded.flatMap((store) =>
     "missing" in store ? [] : [store],
@@ -61,7 +102,36 @@ export default async function RunDetailPage({
               </Link>
             </h1>
           </div>
-          <RunStatusBadge status={run.status} />
+          <div className="flex items-center gap-3">
+            <nav
+              aria-label="Runs in this list"
+              className="flex items-center gap-1 text-[12px]"
+            >
+              <Link
+                href={`/runs${queueQuery}`}
+                className="mr-1 text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {hasRunsFilter(queue) ? "Filtered runs" : "All runs"}
+              </Link>
+              <QueueLink
+                href={
+                  neighbors.newerId && `/runs/${neighbors.newerId}${queueQuery}`
+                }
+                label="Newer run"
+              >
+                <ChevronLeftIcon className="size-4" />
+              </QueueLink>
+              <QueueLink
+                href={
+                  neighbors.olderId && `/runs/${neighbors.olderId}${queueQuery}`
+                }
+                label="Older run"
+              >
+                <ChevronRightIcon className="size-4" />
+              </QueueLink>
+            </nav>
+            <RunStatusBadge status={run.status} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
           <span>{run.createdAt?.toLocaleString("en-US") ?? "—"}</span>

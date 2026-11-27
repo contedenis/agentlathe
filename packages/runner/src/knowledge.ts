@@ -171,6 +171,7 @@ export async function searchKnowledge(
       collectionIds.map((id) => sql`${id}::uuid`),
       sql`, `,
     )})
+      and d.status = 'ready'
       and c.embedding_model = ${embeddingModelId()}
       and cardinality(c.embedding) = ${dims}
     order by ${distance}, d.filename, c.position

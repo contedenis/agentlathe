@@ -8,6 +8,10 @@ An agent is a name, a model slug, an optional system prompt, and a step budget. 
 
 In the UI: **Agents → New agent**. The model dropdown is populated from the provider's `/models` catalog — OpenRouter's by default.
 
+The agent page has four tabs: **Playground**, **Configuration**, **Evaluation** and **Connect**; the address carries the tab (`?tab=connect`), so a link opens the same one. In the Playground, **New conversation** clears the chat and starts a new thread.
+
+A run may take up to 30 minutes in total (`RUN_TIMEOUT_SECONDS`), sub-agent calls included and time spent waiting for an approval excluded; past that it is stopped and recorded as failed.
+
 ```bash
 curl -X POST http://localhost:3000/api/agents \
   -H "Content-Type: application/json" \
@@ -25,7 +29,7 @@ Agents can be **deactivated** (`isActive: false`) rather than deleted: an inacti
 
 ## HTTP tools
 
-A tool is a **JSON Schema** for its input plus an **endpoint URL**. The schema is validated when you save the tool (invalid JSON Schema → 400) and **enforced at run time**: input the model emits that does not match it is rejected back to the model instead of reaching your endpoint. When the agent calls the tool, the runner does a `POST` to that URL with the tool input as the JSON body (`content-type: application/json`, 30s timeout) and hands the response text back to the model — capped at 256 KiB, with anything beyond that truncated and marked `[truncated]`. A non-2xx or a timeout does not end the run: the model is handed the detail (`HTTP <status>: <body>`, or the timeout) and can retry or explain, but the call is recorded as **failed**, so filtering a run's calls by error shows it.
+A tool is a **JSON Schema** for its input plus an **endpoint URL**. The schema is validated when you save the tool (invalid JSON Schema → 400) and **enforced at run time**: input the model emits that does not match it is rejected back to the model instead of reaching your endpoint. When the agent calls the tool, the runner does a `POST` to that URL with the tool input as the JSON body (`content-type: application/json`, 30s timeout) and hands the response text back to the model. The text is capped at a quarter of the agent's model context, counting four characters per token (about 1 MB on a 1,000,000-token model, 128 KB on a 128,000-token one); anything beyond that is truncated and marked `[truncated]`. MCP tool results get the same cap. A non-2xx or a timeout does not end the run: the model is handed the detail (`HTTP <status>: <body>`, or the timeout) and can retry or explain, but the call is recorded as **failed**, so filtering a run's calls by error shows it.
 
 Set `needsApproval: true` and the tool becomes gated: in the Playground an approval banner appears and waits for you.
 
@@ -75,7 +79,7 @@ If the variable is not set (or empty) when a connection is attempted, it fails b
 
 Tool selection is **explicit per agent** — you pick which of the server's tools that agent gets, you do not inherit the whole surface. Selected tools are namespaced `{server}__{tool}` (the server name is slugified, the remote tool name is left alone), so `GitHub` + `search_issues` becomes `GitHub__search_issues` and two servers exposing `search` do not collide. Each selected tool can be marked to **require approval** (the shield on its badge in the agent form), which puts it behind the same gate as an approval-flagged HTTP tool.
 
-A server that fails to open is collected and reported, not fatal — the rest of the agent's tools still work, and the run detail page lists which servers were down. A server that opens but no longer offers a tool you selected is reported there too, naming the missing tools. Connecting to a server and listing its tools is each bounded by a 30s timeout (the dashboard's **Test connection** included); once connected, an individual tool call gets 60s before it is aborted, handed to the model as an error and recorded as a failed call.
+A server that fails to open is collected and reported, not fatal — the rest of the agent's tools still work, and the run detail page lists which servers were down. A server that opens but no longer offers a tool you selected is reported there too, naming the missing tools. Connecting to a server and listing its tools is each bounded by a 30s timeout (the dashboard's **Test connection** included); once connected, an individual tool call gets 60s before it is aborted, handed to the model as an error and recorded as a failed call. A response from the server larger than 8 MB fails the call the same way.
 
 Auth is **static headers only** (literal values or `AGENTLATHE_SECRET_*` env references); interactive OAuth is deferred, see [SECURITY.md](../SECURITY.md).
 
@@ -126,7 +130,7 @@ The message can carry variables, filled in for each run: `{{date}}` and `{{datet
 
 **Every time a schedule comes due it leaves an occurrence**, listed on the schedule's page with its result, the reason and a link to the run:
 
-- **succeeded** / **failed** — the run finished, or ended with an error.
+- **succeeded** / **failed** — the run finished, or ended with an error; a run stopped by the time limit is failed.
 - **skipped · missed** — it came due more than 2 minutes before a scheduler saw it (the app was down, or no scheduler was running). Missed runs are skipped, never caught up: after downtime the schedule runs again at its next time.
 - **skipped · overlap** — the previous run of the same schedule was still going.
 - **blocked** — a check before calling the model failed: the agent is inactive, `PROVIDER_API_KEY` is not set, or an MCP server the agent uses references an `AGENTLATHE_SECRET_*` variable that is not set.
@@ -161,7 +165,7 @@ curl http://localhost:3000/api/schedules/<schedule-uuid>/occurrences
 
 ## Run subjects
 
-A run can say who it acted for: a customer, a ticket, a repository, whatever your callers are about. Send `x-subject-id` on `/v1` or MCP, fill **Act as subject** (and **Memory key**, the Playground's `x-memory-key`) in the Playground, or give a schedule a **Subject**. The run page shows it, and **Runs** filters by it. It is a label of up to 200 characters that the caller picks, not an identity anyone checked: see [SECURITY.md](../SECURITY.md).
+A run can say who it acted for: a customer, a ticket, a repository, whatever your callers are about. Send `x-subject-id` on `/v1` or MCP, fill **Act as subject** in the Playground (and **Memory key**, its `x-memory-key`, which appears for agents with a custom-key memory), or give a schedule a **Subject**. The run page shows it, and **Runs** filters by it. It is a label of up to 200 characters that the caller picks, not an identity anyone checked: see [SECURITY.md](../SECURITY.md).
 
 ## Memory
 
@@ -231,7 +235,7 @@ Processing runs in every app process, two documents at a time. A document left i
 
 `search_knowledge` takes a `query` and returns the five passages closest in meaning to it, from all the agent's searched collections, each with its collection, document and page (PDF only). It finds meaning, not exact text: a part number or an error code may not come back first. If the embedding provider fails during a search, the tool returns the error to the model and the run goes on. The run page shows each search with its query and the passages it returned, and each one is recorded as a call of kind `knowledge`.
 
-**Always read** is for short documents the agent must always keep in mind. They are framed in the instructions as reference material — data, not instructions. The collections an agent reads whole share a quarter of the model's context, counting about four characters per token (128,000 tokens when the provider does not report the model's context); the agent form shows how much of it they take. A collection that does not fit is searched instead for that run, and the run carries a warning, shown on the run page and counted on the agent page under "Runs that ran without part of their context". Both need the run recorded: `/v1` and MCP runs are not recorded by default (see [Metrics](#metrics)).
+**Always read** is for short documents the agent must always keep in mind. They are framed in the instructions as reference material — data, not instructions. The collections an agent reads whole share a quarter of the model's context, counting about four characters per token (when the provider does not report the model's context, `CONTEXT_LIMIT_FALLBACK` tokens, 128,000 unless you set it); the agent form shows how much of it they take. A collection that does not fit is searched instead for that run, and the run carries a warning, shown on the run page and counted on the agent page under "Runs that ran without part of their context". Both need the run recorded: `/v1` and MCP runs are not recorded by default (see [Metrics](#metrics)).
 
 If the agent searches a collection and a tool of its own already resolves to `search_knowledge`, that tool is renamed `search_knowledge_2`, keeping its approval gate. Sub-agents use their own collections, not their caller's. An agent's [version](#metrics) includes the name, description and mode of each attached collection, not its documents: adding a document changes what the agent finds without creating a new version.
 
@@ -275,7 +279,7 @@ Three tables, deliberately separated:
 
 Each run also points at the **agent version** it ran with: a hash of the agent's behavior-relevant configuration (model, prompt, step limit, skills, tools, MCP selections, sub-agents, memory settings, knowledge collections and their modes) taken when the run started. The run detail page shows its first 8 characters next to the duration, so two runs with the same short hash ran with the same configuration; clicking it opens that configuration: prompt, skills, tools, MCP selections, sub-agents, memory and knowledge. MCP auth headers are never part of it, and of a tool or server URL only scheme and host stay readable; the rest is stored as a short digest.
 
-Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in `/metrics`, or over the API:
+Whether a run is recorded at all is gated **per source**, in `settings`: `trackDashboardRuns` and `trackScheduleRuns` default to `true`, `trackV1Runs` and `trackMcpRuns` to `false`. Toggle them under "What to record" in **Settings** (`/settings`), or over the API:
 
 ```bash
 curl -X PATCH http://localhost:3000/api/settings \
@@ -309,7 +313,7 @@ curl -X POST http://localhost:3000/api/runs/<run-uuid>/fix-drafts \
   }'
 ```
 
-The Home page surfaces a **"Runs to review"** list — runs that either failed or carry an open note — instead of just the most recent ones, so the queue stays useful once you have thousands of runs.
+The Home page surfaces a **"Needs attention"** list — runs that either failed or carry an open note — instead of just the most recent ones, so the queue stays useful once you have thousands of runs.
 
 ## Criteria
 
@@ -344,7 +348,7 @@ Each criterion shows its pass rate over the runs of the last 30 days (pass / (pa
 
 **Copy from agent…** copies selected criteria from another agent. The copies are independent of the originals.
 
-**Evaluation** runs automatically once a run's transcript is stored, unless you switch off "Evaluate new runs automatically" in the agent form, under **Recording and evaluation** next to "Record external traffic" (`autoEvaluate` on the agent API; the Evaluation tab says which way it is set). Only runs with a stored transcript can be judged, so /v1 and MCP runs need the agent's traffic recording on. **Re-evaluate recent runs** judges the agent's latest runs again and reports the totals (a human review is kept unless the criterion's question was edited since). If the judge endpoint does not serve the Decisions API, or the key or judge model is wrong, the tab shows the last evaluation error. The judge model is set under the metrics page's settings ("Judge model", default `typesafe/jev-1.13`, or `judgeModel` in `PATCH /api/settings`), which also shows the host the judge is called on.
+**Evaluation** runs automatically once a run's transcript is stored, unless you switch off "Evaluate new runs automatically" in the agent form, under **Recording and evaluation** next to "Record external traffic" (`autoEvaluate` on the agent API; the Evaluation tab says which way it is set). Only runs with a stored transcript can be judged, so /v1 and MCP runs need the agent's traffic recording on. **Re-evaluate recent runs** judges the agent's latest runs again and reports the totals (a human review is kept unless the criterion's question was edited since). If the judge endpoint does not serve the Decisions API, or the key or judge model is wrong, the tab shows the last evaluation error. The judge model is set under **Settings** ("Judge model", default `typesafe/jev-1.13`, or `judgeModel` in `PATCH /api/settings`), which also shows the host the judge is called on.
 
 **Another judge endpoint.** By default the judge is OpenRouter's Decisions API, reached with `PROVIDER_API_KEY`. If `PROVIDER_BASE_URL` points somewhere else (OpenAI, Ollama, vLLM), that endpoint does not serve the judge and evaluations fail until you set the two variables below. To call Jev somewhere else, set two env vars: `JUDGE_URL`, the full endpoint, and `JUDGE_API_KEY`, its key. For TypeSafe's own API that is `https://api.typesafe.ai/v1/systemone`, with the judge model set to a TypeSafe id such as `jev-latest`. Any host that speaks the same Decisions / System One API works the same way (AIMLAPI, a LiteLLM proxy). `JUDGE_URL` without `JUDGE_API_KEY` refuses to call: the provider key is never sent to another host. `JUDGE_API_KEY` on its own keeps OpenRouter and only bills judge calls to a different key.
 
@@ -359,8 +363,10 @@ The run page (`/runs/[id]`) puts the run's counts in one line and its review wor
 On the **Runs** page every row summarises its verdicts: a red badge counts failures (a human review counts instead of the judge), an amber one counts verdicts still waiting for review, and a green check ("No failures") means every verdict passed or did not apply and at least one passed (a muted "n/a" when none applied). When nothing needs attention but the judge errored or skipped a run, an "error" or "skipped" badge says so. Only verdicts of active criteria under their current wording are counted. The **Evaluation** filter next to the **Source** buttons narrows the list, and is kept when you change the page or the source:
 
 - **Needs review** is the review queue: runs with at least one unreviewed needs-review verdict, with how many there are next to its name. When it is empty the list says "Nothing to review."
-- **Failed**: runs with at least one failing verdict, after human reviews.
+- **Failed a criterion**: runs with at least one failing verdict, after human reviews. A run that failed to finish is a different thing: it shows as an error in the status column.
 - **Not evaluated**: runs with a stored transcript and no counted verdicts, for agents that have at least one active criterion, to spot gaps (for example runs from before you wrote a criterion).
+
+Next to them, **Needs attention** keeps the runs that failed or carry an open note — the same list Home shows — and an agent's **Runs** link opens the list filtered to that agent. The filters combine. A run opened from the list remembers the filters it came from: the arrows at the top of the run page go to the newer and the older run in that same list, so a queue can be reviewed without going back to it.
 
 ---
 
@@ -368,7 +374,7 @@ On the **Runs** page every row summarises its verdicts: a red badge counts failu
 
 ### OpenAI-compatible API (`/v1`)
 
-Every **active** agent is exposed as a model. Point any OpenAI-compatible client (Cursor, LiteLLM, the `openai` SDK) at `http://localhost:3000/v1`.
+Every **active** agent is exposed as a model. Point any OpenAI-compatible client (Cursor, LiteLLM, the `openai` SDK) at `http://localhost:3000/v1`. The agent's **Connect** tab has this call, the SDK snippets and the MCP client block filled in for that agent.
 
 `GET /v1/models` returns each agent's **ID** (a slug you pick in the agent form — lowercase letters, digits, `.`, `_`, `-`) as the model `id`:
 
@@ -425,6 +431,8 @@ The API is **stateless**: the caller owns the full `messages` history on every r
 
 Tools flagged `needsApproval` are **automatically denied** on `/v1` — it is headless, there is nobody there to approve. The model gets back `tool '<name>' requires approval; not available over the API` and can carry on without it.
 
+**Errors.** A run that fails answers with `The server had an error while processing your request.` (`type: "api_error"`), as a 500 or, when streaming, as a final `error` frame with no `[DONE]`. A streaming run stopped by the time limit ends with `The run exceeded its time limit.` instead; a non-streaming one returns the same generic 500. The provider's or the tool's own message is not sent to the client: it is on the run, on the **Runs** page, when the run is recorded. The MCP endpoint does answer with the error's message.
+
 ### MCP endpoint (one per agent)
 
 Each active agent is also a tiny MCP server at:
@@ -457,7 +465,7 @@ Two things get stored, and they are governed separately:
 
 | | What it stores | Default | Where to change it |
 |---|---|---|---|
-| **Run** | One row: agent, source, status, duration, steps, tokens, tool calls. No message content. | Playground and schedules **on**; API and MCP **off** | "What to record" in `/metrics`, or `PATCH /api/settings` |
+| **Run** | One row: agent, source, status, duration, steps, tokens, tool calls. No message content. | Playground and schedules **on**; API and MCP **off** | "What to record" in **Settings** (`/settings`), or `PATCH /api/settings` |
 | **Transcript** | The actual messages of the call, input and output. | Playground and schedules **always**; API and MCP **off** | "Record external traffic" on the agent |
 
 So the default is: your own experiments are recorded, third-party traffic is not — until you decide otherwise, per agent.

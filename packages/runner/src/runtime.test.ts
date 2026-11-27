@@ -223,11 +223,13 @@ describe("streamAgentForUI — cleanup and persistence", () => {
   it("forwards abortSignal to createAgentUIStream", async () => {
     mockCleanup(vi.fn(async () => {}));
     const getOptions = capture();
-    const signal = new AbortController().signal;
+    const abort = new AbortController();
 
-    await streamAgentForUI(agentRow, [], { abortSignal: signal });
+    await streamAgentForUI(agentRow, [], { abortSignal: abort.signal });
 
-    expect(getOptions().abortSignal).toBe(signal);
+    expect(getOptions().abortSignal?.aborted).toBe(false);
+    abort.abort();
+    expect(getOptions().abortSignal?.aborted).toBe(true);
   });
 
   it("emits the recorded run id as a data part at the end of the stream", async () => {
@@ -389,7 +391,7 @@ describe("buildAgentRuntime — child stats and MCP failures surface in stats()"
   it("merges child consumption and carries mcpFailures from buildTools", async () => {
     let reportChild: ((stats: AgentRunStats) => void) | undefined;
     vi.mocked(buildTools).mockImplementation(
-      async (_id, _ctx, _buildSubAgentRuntime, onChildStats) => {
+      async (_id, _contextLimit, _ctx, _buildSubAgentRuntime, onChildStats) => {
         reportChild = onChildStats;
         return {
           tools: {},
@@ -482,11 +484,13 @@ describe("buildAgentRuntime — recursion guard is seeded internally", () => {
       mcpFailures: [],
       cleanup: async () => {},
     });
+    vi.mocked(getContextLimit).mockResolvedValue(128_000);
 
     await buildAgentRuntime(agentRow);
 
     expect(buildTools).toHaveBeenCalledWith(
       "agent-1",
+      128_000,
       {
         callStack: new Set(["agent-1"]),
         depth: 0,
@@ -518,7 +522,7 @@ describe("buildAgentRuntime — recursion guard is seeded internally", () => {
 
     const { stats } = await buildAgentRuntime(agentRow, { run });
 
-    expect(vi.mocked(buildTools).mock.calls[0][1].run).toBe(run);
+    expect(vi.mocked(buildTools).mock.calls[0][2].run).toBe(run);
     expect(loadMemory).toHaveBeenCalledWith("agent-1", run);
     expect(stats()).toMatchObject({ memorySeen: [seen], warnings: [warning] });
   });

@@ -43,7 +43,7 @@ MCP servers currently authenticate with **static headers only** — you provide 
 The **OAuth 2.1 authorization-code flow is supported by the underlying library** (`@ai-sdk/mcp`) via the transport's `authProvider?: OAuthClientProvider` option — the SDK handles metadata discovery, Dynamic Client Registration, PKCE, token exchange and refresh. Wiring it up is deferred feature work, because the runner is headless and would require:
 
 1. An `OAuthClientProvider` backed by Postgres (`tokens()` / `saveTokens()` per connection, `redirectToAuthorization()`).
-2. A "Connect" action in the dashboard that opens the authorization URL (the sign-in popup).
+2. A sign-in action on the MCP server page that opens the authorization URL (the sign-in popup).
 3. A callback route (`/api/mcp-servers/[id]/oauth/callback`) to exchange the code and store the tokens.
 4. Passing `authProvider` to the transport in the runner instead of static headers.
 

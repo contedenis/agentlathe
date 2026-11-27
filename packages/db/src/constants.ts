@@ -176,6 +176,7 @@ export const CHUNK_OVERLAP = 150;
 export const SEARCH_RESULTS = 5;
 export const ALWAYS_CONTEXT_SHARE = 0.25;
 export const CHARS_PER_TOKEN = 4;
+export const TOOL_RESULT_CONTEXT_SHARE = 0.25;
 export const DEFAULT_CONTEXT_LIMIT = 128_000;
 export const PROCESSING_ATTEMPTS = 3;
 export const PROCESSING_STALE_MINUTES = 10;

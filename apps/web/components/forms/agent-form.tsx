@@ -77,11 +77,13 @@ export function AgentForm({
   catalogs,
   collections,
   models,
+  contextFallback,
   initial,
 }: {
   catalogs: ToolPickerCatalogs;
   collections: KnowledgeCatalogItem[];
   models: ModelOption[];
+  contextFallback: number;
   initial?: AgentFormValues;
 }) {
   const router = useRouter();
@@ -115,7 +117,8 @@ export function AgentForm({
     initial?.knowledge ?? [],
   );
   const contextLength =
-    models.find((option) => option.id === model)?.contextLength ?? null;
+    models.find((option) => option.id === model)?.contextLength ??
+    contextFallback;
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasMounted, setCanvasMounted] = useState(false);
   const [pending, setPending] = useState(false);

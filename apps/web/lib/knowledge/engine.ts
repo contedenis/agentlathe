@@ -19,7 +19,6 @@ import {
 
 const CONCURRENCY = 2;
 const EMBED_BATCH = 100;
-const INSERT_BATCH = 200;
 const RETRY_AFTER_SECONDS = 120;
 
 type Claim = { id: string; claimId: string; attempts: number };
@@ -57,22 +56,32 @@ async function requeueOtherModels(model: string): Promise<void> {
 }
 
 async function failExhausted(): Promise<void> {
-  await db
-    .update(knowledgeDocuments)
-    .set({
-      status: "failed",
-      error: `Processing stopped before finishing ${PROCESSING_ATTEMPTS} times.`,
-      claimedAt: null,
-      claimId: null,
-      updatedAt: sql`now()`,
-    })
-    .where(
-      and(
-        eq(knowledgeDocuments.status, "processing"),
-        sql`${knowledgeDocuments.claimedAt} < now() - make_interval(mins => ${PROCESSING_STALE_MINUTES})`,
-        sql`${knowledgeDocuments.attempts} >= ${PROCESSING_ATTEMPTS}`,
-      ),
-    );
+  await db.transaction(async (tx) => {
+    const failed = await tx
+      .update(knowledgeDocuments)
+      .set({
+        status: "failed",
+        error: `Processing stopped before finishing ${PROCESSING_ATTEMPTS} times.`,
+        claimedAt: null,
+        claimId: null,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(knowledgeDocuments.status, "processing"),
+          sql`${knowledgeDocuments.claimedAt} < now() - make_interval(mins => ${PROCESSING_STALE_MINUTES})`,
+          sql`${knowledgeDocuments.attempts} >= ${PROCESSING_ATTEMPTS}`,
+        ),
+      )
+      .returning({ id: knowledgeDocuments.id });
+    if (failed.length > 0)
+      await tx.delete(knowledgeChunks).where(
+        inArray(
+          knowledgeChunks.documentId,
+          failed.map((doc) => doc.id),
+        ),
+      );
+  });
 }
 
 async function claimNext(): Promise<Claim | null> {
@@ -92,15 +101,6 @@ async function claimNext(): Promise<Claim | null> {
     )
     returning id, claim_id as "claimId", attempts`);
   return rows[0] ?? null;
-}
-
-async function heartbeat(claim: Claim): Promise<boolean> {
-  const rows = await db
-    .update(knowledgeDocuments)
-    .set({ claimedAt: sql`now()` })
-    .where(fence(claim))
-    .returning({ id: knowledgeDocuments.id });
-  return rows.length > 0;
 }
 
 async function readText(
@@ -131,51 +131,59 @@ async function readText(
   return saved.length ? { text, mediaType } : null;
 }
 
-async function writeChunks(
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function writeFenced(
   claim: Claim,
-  rows: (typeof knowledgeChunks.$inferInsert)[],
-  model: string,
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [doc] = await tx
-      .select({ id: knowledgeDocuments.id })
-      .from(knowledgeDocuments)
-      .where(fence(claim))
-      .for("update");
-    if (!doc) return;
-    await tx
-      .delete(knowledgeChunks)
-      .where(eq(knowledgeChunks.documentId, claim.id));
-    for (let i = 0; i < rows.length; i += INSERT_BATCH)
-      await tx.insert(knowledgeChunks).values(rows.slice(i, i + INSERT_BATCH));
-    await tx
+  write: (tx: Tx) => Promise<unknown>,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const held = await tx
       .update(knowledgeDocuments)
-      .set({
-        status: "ready",
-        embeddingModel: model,
-        error: null,
-        claimedAt: null,
-        claimId: null,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(knowledgeDocuments.id, claim.id));
+      .set({ claimedAt: sql`now()` })
+      .where(fence(claim))
+      .returning({ id: knowledgeDocuments.id });
+    if (held.length === 0) return false;
+    await write(tx);
+    return true;
   });
+}
+
+async function markReady(claim: Claim, model: string): Promise<void> {
+  await db
+    .update(knowledgeDocuments)
+    .set({
+      status: "ready",
+      embeddingModel: model,
+      error: null,
+      claimedAt: null,
+      claimId: null,
+      updatedAt: sql`now()`,
+    })
+    .where(fence(claim));
 }
 
 async function fail(claim: Claim, err: unknown): Promise<void> {
   const permanent =
     err instanceof UnreadableDocumentError ||
     claim.attempts >= PROCESSING_ATTEMPTS;
-  await db
-    .update(knowledgeDocuments)
-    .set({
-      status: permanent ? "failed" : "pending",
-      error: errorMessage(err),
-      claimedAt: permanent ? null : sql`now()`,
-      claimId: null,
-      updatedAt: sql`now()`,
-    })
-    .where(fence(claim));
+  await db.transaction(async (tx) => {
+    const [failed] = await tx
+      .update(knowledgeDocuments)
+      .set({
+        status: permanent ? "failed" : "pending",
+        error: errorMessage(err),
+        claimedAt: permanent ? null : sql`now()`,
+        claimId: null,
+        updatedAt: sql`now()`,
+      })
+      .where(fence(claim))
+      .returning({ id: knowledgeDocuments.id });
+    if (failed && permanent)
+      await tx
+        .delete(knowledgeChunks)
+        .where(eq(knowledgeChunks.documentId, claim.id));
+  });
 }
 
 async function processClaim(claim: Claim): Promise<void> {
@@ -186,21 +194,28 @@ async function processClaim(claim: Claim): Promise<void> {
     const chunks = chunkPages(documentPages(doc.text, doc.mediaType), {
       paged: doc.mediaType === "application/pdf",
     });
-    const rows: (typeof knowledgeChunks.$inferInsert)[] = [];
+    const cleared = await writeFenced(claim, (tx) =>
+      tx
+        .delete(knowledgeChunks)
+        .where(eq(knowledgeChunks.documentId, claim.id)),
+    );
+    if (!cleared) return;
     for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
       const batch = chunks.slice(i, i + EMBED_BATCH);
       const embeddings = await embedTexts(batch.map((chunk) => chunk.content));
-      rows.push(
-        ...batch.map((chunk, n) => ({
-          ...chunk,
-          documentId: claim.id,
-          embedding: embeddings[n],
-          embeddingModel: model,
-        })),
+      const written = await writeFenced(claim, (tx) =>
+        tx.insert(knowledgeChunks).values(
+          batch.map((chunk, n) => ({
+            ...chunk,
+            documentId: claim.id,
+            embedding: embeddings[n],
+            embeddingModel: model,
+          })),
+        ),
       );
-      if (!(await heartbeat(claim))) return;
+      if (!written) return;
     }
-    await writeChunks(claim, rows, model);
+    await markReady(claim, model);
   } catch (err) {
     await fail(claim, err).catch((failure) =>
       console.error("recording a knowledge failure failed", failure),

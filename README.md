@@ -11,7 +11,7 @@ Models come from any **OpenAI-compatible provider**. The default is [OpenRouter]
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.png">
-  <img alt="The agentlathe dashboard: active agents, configured resources and runs over the last week, next to two agents flagged for pointing at deactivated resources and a queue of runs waiting to be reviewed." src="docs/images/home-light.png">
+  <img alt="The agentlathe dashboard: active agents, configured resources and runs over the last week, next to two agents flagged for pointing at deactivated resources and the runs that need attention, failed or carrying an open note." src="docs/images/home-light.png">
 </picture>
 
 ## What it's for, and what it isn't
@@ -24,7 +24,7 @@ Reviewing a run is the half that is hard to do without a tool: what the agent lo
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/run-review-dark.png">
-  <img alt="A recorded run: the memory it loaded and the change it made, and a knowledge search with its query and the passage it found, next to the judge's verdict on each of the agent's criteria, one of them waiting for a human review." src="docs/images/run-review-light.png">
+  <img alt="A recorded run: the memory it loaded, and a knowledge search with its query and the passage it found, next to the judge's verdict on each of the agent's criteria, one of them waiting for a human review." src="docs/images/run-review-light.png">
 </picture>
 
 Reading every run doesn't scale, so agents can also carry **criteria**: yes/no questions — "did it avoid promising a refund it couldn't confirm?" — that a judge model answers about each recorded run. A fix draft turns into a criterion in one click, checked on the spot against the run it came from. Verdicts the judge is unsure about land in a review queue, your review overrides the judge, and the metrics compare each criterion's pass rate across agent versions, so you can see whether the change you made actually helped. The judge is TypeSafe's Jev — through OpenRouter by default, or straight from TypeSafe or any other host that serves it — which costs a fraction of a cent per run.
@@ -102,6 +102,13 @@ curl http://localhost:3000/v1/chat/completions \
 ```
 
 Each active agent is also its own MCP server at `POST /mcp/agents/{agent-id}`, exposing one tool. Point Claude Desktop, Cursor or any MCP client at it.
+
+The agent's **Connect** tab has the curl call, the OpenAI SDK snippets (Python and TypeScript) and the MCP client block filled in for that agent.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/agent-connect-dark.png">
+  <img alt="An agent's Connect tab: the base URL and model id of the OpenAI-compatible API with a curl example, next to the agent's MCP server URL, its tool name and a client configuration block." src="docs/images/agent-connect-light.png">
+</picture>
 
 The full manual — building agents, HTTP tools, MCP servers, skills, sub-agents, schedules, run subjects, memory, knowledge, metrics, fix drafts, criteria and evaluations, plus both transport contracts — is in [docs/USAGE.md](docs/USAGE.md).
 

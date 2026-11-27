@@ -1,6 +1,6 @@
 "use client";
 
-import { PlusIcon, TriangleAlertIcon } from "lucide-react";
+import { ArrowUpRightIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -252,6 +252,19 @@ export function CriteriaPanel({
         >
           {evaluating ? "Evaluating..." : "Re-evaluate recent runs"}
         </Button>
+        {!empty && (
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
+            className="ml-auto"
+            title="Pass rate of each version of this agent, to see whether a change helped"
+            render={<Link href={`/metrics/${agentId}`} />}
+          >
+            Results by version
+            <ArrowUpRightIcon />
+          </Button>
+        )}
       </div>
 
       {!empty && !recordTraffic && (
@@ -292,7 +305,7 @@ export function CriteriaPanel({
           }
         />
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="grid gap-2 lg:grid-cols-2">
           {criteria.map((criterion) => (
             <CriterionRow
               key={criterion.id}

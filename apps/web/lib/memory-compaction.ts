@@ -23,6 +23,7 @@ import { after } from "next/server";
 import { createLimiter } from "./limiter";
 
 const compactionLimit = createLimiter(2);
+const COMPACTION_TIMEOUT_MS = 3 * 60 * 1000;
 
 export type CompactionDetail = {
   operations: CompactionPlan["operations"];
@@ -137,6 +138,7 @@ export async function compactPartition(
         purpose: store.purpose,
         entries,
         target,
+        abortSignal: AbortSignal.timeout(COMPACTION_TIMEOUT_MS),
       });
       tokens = {
         inputTokens: planned.inputTokens,

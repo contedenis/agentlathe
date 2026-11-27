@@ -220,7 +220,7 @@ test.describe("agentlathe e2e flows", () => {
     await page.goto("/runs");
     // Scoped to main: dev mode can leave a stale copy of the table detached under <body>.
     const runRow = page.locator("main table tbody tr").filter({
-      has: page.locator(`a[href="/runs/${firstRunId}"]`),
+      has: page.locator(`a[href^="/runs/${firstRunId}"]`),
     });
     await expect(runRow).toContainText("2 open");
   });
@@ -317,6 +317,7 @@ test.describe("agentlathe e2e flows", () => {
     await expect(page.getByText("Criterion created.")).toBeVisible();
     await expect(criterionDialog).not.toBeVisible();
 
+    await page.getByRole("tab", { name: "Playground" }).click();
     const input = page.getByRole("textbox", {
       name: "Write a message (Enter sends, Shift+Enter adds a line break)",
     });

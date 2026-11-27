@@ -536,7 +536,7 @@ describe("EvaluationPanel empty states", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Add one on the agent page" }),
-    ).toHaveAttribute("href", "/agents/agent-1");
+    ).toHaveAttribute("href", "/agents/agent-1?tab=evaluation");
     expect(
       screen.queryByRole("button", { name: "Re-evaluate" }),
     ).not.toBeInTheDocument();

@@ -88,7 +88,7 @@ test.describe("review UI", () => {
 
     const needsReviewSection = page
       .locator("section")
-      .filter({ has: page.getByText("Runs to review") });
+      .filter({ has: page.getByText("Needs attention") });
     await expect(
       needsReviewSection.getByRole("link", { name: new RegExp(AGENT_NAME) }),
     ).toBeVisible();
@@ -101,7 +101,7 @@ test.describe("review UI", () => {
     await page.waitForURL(/[?&]q=/);
     await expect(
       page.locator("table tbody tr").filter({
-        has: page.locator(`a[href="/runs/${okRunId}"]`),
+        has: page.locator(`a[href^="/runs/${okRunId}"]`),
       }),
     ).toBeVisible();
   });
@@ -114,7 +114,7 @@ test.describe("review UI", () => {
     await page.waitForURL(/source=dashboard/);
 
     const errorRow = page.locator("table tbody tr").filter({
-      has: page.locator(`a[href="/runs/${errorRunId}"]`),
+      has: page.locator(`a[href^="/runs/${errorRunId}"]`),
     });
     await expect(errorRow).toBeVisible();
     await expect(errorRow).toContainText("error");
@@ -245,6 +245,7 @@ test.describe("review UI", () => {
 
     await page.waitForURL(`/agents/${editableAgentId}`);
     await expect(page.getByText("Agent updated.")).toBeVisible();
+    await page.getByRole("tab", { name: "Configuration" }).click();
     await expect(page.locator("dd", { hasText: newDescription })).toBeVisible();
     await expect(page.locator("dd", { hasText: /^42$/ })).toBeVisible();
 
@@ -419,7 +420,7 @@ function verdictRow(page: Page, question: string) {
 
 function runRow(page: Page, runId: string) {
   return page.locator("main table tbody tr").filter({
-    has: page.locator(`a[href="/runs/${runId}"]`),
+    has: page.locator(`a[href^="/runs/${runId}"]`),
   });
 }
 
@@ -696,7 +697,7 @@ test.describe("evaluators UI", () => {
     await expect(runRow(page, needsReviewRunId)).toContainText("1 to review");
     await expect(page.getByText("1 result", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Failed" }).click();
+    await page.getByRole("button", { name: "Failed a criterion" }).click();
     await page.waitForURL(/evaluation=failed/);
     await expect(rows).toHaveCount(1);
     await expect(runRow(page, failRunId)).toContainText("1 fail");
@@ -711,7 +712,10 @@ test.describe("evaluators UI", () => {
     await expect(runRow(page, notEvaluatedRunId)).toBeVisible();
     await expect(runRow(page, noTranscriptRunId)).toHaveCount(0);
 
-    await page.getByRole("button", { name: "All", exact: true }).last().click();
+    await page
+      .getByRole("group", { name: "Evaluation" })
+      .getByRole("button", { name: "All", exact: true })
+      .click();
     await page.waitForURL((url) => !url.searchParams.has("evaluation"));
     await expect(rows).toHaveCount(7);
   });
@@ -912,7 +916,7 @@ test.describe("evaluators UI", () => {
       page.getByRole("button", { name: /^Needs review/ }),
     ).toBeVisible();
     await expect(
-      page.locator(`a[href="/runs/${needsReviewRunId}"]`),
+      page.locator(`a[href^="/runs/${needsReviewRunId}"]`),
     ).toBeVisible();
   });
 });

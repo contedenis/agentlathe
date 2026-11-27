@@ -39,6 +39,7 @@ import {
 import { listAgentMemoryStores } from "./queries-memory";
 import { runDay } from "./queries-metrics";
 import type { EvaluationFilter } from "./run-evaluation-filter";
+import type { RunsFilter } from "./runs-filter";
 
 export function listAgents() {
   return db.select().from(agents).orderBy(desc(agents.createdAt));
@@ -151,32 +152,72 @@ const evaluationFilterCondition: Record<EvaluationFilter, SQL> = {
   )`,
 };
 
-export async function listRunsPage({
-  q,
-  source,
-  subject,
-  evaluation,
-  limit,
-  offset,
-}: {
-  q: string;
-  source?: string;
-  subject?: string;
-  evaluation?: EvaluationFilter;
-  limit: number;
-  offset: number;
-}) {
-  const query = q.slice(0, 100);
+// Needs attention = failed or carrying an open note; both stay useful at 10,000 runs.
+const needsAttentionFilter = or(
+  eq(agentRuns.status, "error"),
+  sql`exists (
+    select 1 from ${fixDrafts}
+    where ${fixDrafts.runId} = ${agentRuns.id} and ${fixDrafts.status} = 'open'
+  )`,
+);
+
+function runsWhere(filter: RunsFilter) {
+  const query = filter.q.slice(0, 100);
   const escaped = query.replace(/[\\%_]/g, "\\$&");
   const baseFilter = and(
     query ? ilike(agents.name, `%${escaped}%`) : undefined,
-    source ? eq(agentRuns.source, source) : undefined,
-    subject ? eq(agentRuns.subjectId, subject) : undefined,
+    filter.source ? eq(agentRuns.source, filter.source) : undefined,
+    filter.subject ? eq(agentRuns.subjectId, filter.subject) : undefined,
+    filter.agent ? eq(agentRuns.agentId, filter.agent) : undefined,
+    filter.attention ? needsAttentionFilter : undefined,
   );
-  const filter = and(
+  return {
     baseFilter,
-    evaluation ? evaluationFilterCondition[evaluation] : undefined,
-  );
+    filter: and(
+      baseFilter,
+      filter.evaluation
+        ? evaluationFilterCondition[filter.evaluation]
+        : undefined,
+    ),
+  };
+}
+
+export async function getRunNeighbors(id: string, runsFilter: RunsFilter) {
+  const { filter } = runsWhere(runsFilter);
+  const createdAt = sql`(select created_at from agent_runs where id = ${id})`;
+  const pick = (side: SQL, order: SQL) =>
+    db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+      .where(and(filter, side))
+      .orderBy(order)
+      .limit(1);
+  const [[newer], [older]] = await Promise.all([
+    pick(sql`${agentRuns.createdAt} > ${createdAt}`, asc(agentRuns.createdAt)),
+    pick(sql`${agentRuns.createdAt} < ${createdAt}`, desc(agentRuns.createdAt)),
+  ]);
+  return { newerId: newer?.id ?? null, olderId: older?.id ?? null };
+}
+
+export async function listRunsPage({
+  limit,
+  offset,
+  ...runsFilter
+}: Partial<Omit<RunsFilter, "evaluation">> & {
+  evaluation?: EvaluationFilter | "";
+  limit: number;
+  offset: number;
+}) {
+  const { baseFilter, filter } = runsWhere({
+    q: "",
+    source: "",
+    subject: "",
+    evaluation: "",
+    agent: "",
+    attention: false,
+    ...runsFilter,
+  });
 
   const [rows, totals, [needsReview]] = await Promise.all([
     db
@@ -344,6 +385,15 @@ type McpRefGroup = {
   tools: Array<{ name: string; needsApproval: boolean }>;
 };
 
+export async function getAgentName(id: string): Promise<string | null> {
+  const [row] = await db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(eq(agents.id, id))
+    .limit(1);
+  return row?.name ?? null;
+}
+
 export async function getAgentDetail(id: string) {
   if (!isUuid(id)) return null;
   const [agentRow, skillRows, toolRows, mcpRows, subAgentRows, memoryRows] =
@@ -502,15 +552,6 @@ async function getAgentsNeedingAttention() {
     .sort((a, b) => b.brokenRefs - a.brokenRefs);
 }
 
-// Needs review = failed or carrying an open note; both stay useful at 10,000 runs.
-const needsReviewFilter = or(
-  eq(agentRuns.status, "error"),
-  sql`exists (
-    select 1 from ${fixDrafts}
-    where ${fixDrafts.runId} = ${agentRuns.id} and ${fixDrafts.status} = 'open'
-  )`,
-);
-
 export async function getDashboardData() {
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -521,8 +562,8 @@ export async function getDashboardData() {
     skillCount,
     mcpCount,
     runCount,
-    needsReviewCount,
-    needsReview,
+    needsAttentionCount,
+    needsAttention,
     agentIssues,
     activityDaily,
   ] = await Promise.all([
@@ -554,7 +595,7 @@ export async function getDashboardData() {
     db
       .select({ value: count() })
       .from(agentRuns)
-      .where(needsReviewFilter)
+      .where(needsAttentionFilter)
       .then((rows) => rows[0]?.value ?? 0),
     db
       .select({
@@ -567,7 +608,7 @@ export async function getDashboardData() {
       })
       .from(agentRuns)
       .innerJoin(agents, eq(agentRuns.agentId, agents.id))
-      .where(needsReviewFilter)
+      .where(needsAttentionFilter)
       .orderBy(desc(agentRuns.createdAt))
       .limit(6),
     getAgentsNeedingAttention(),
@@ -598,8 +639,8 @@ export async function getDashboardData() {
       skills: skillCount,
       mcp: mcpCount,
     },
-    needsReview,
-    needsReviewCount,
+    needsAttention,
+    needsAttentionCount,
     agentIssues,
     activity: {
       runs: activityRuns,

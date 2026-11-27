@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { parseRunsFilter } from "@/lib/runs-filter";
 import { RunsList } from "./runs-list";
 
 vi.mock("next/navigation", () => ({
@@ -32,15 +33,16 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-function renderList(props: Partial<Props> = {}) {
+function renderList(
+  props: Partial<Props> = {},
+  filter: Parameters<typeof parseRunsFilter>[0] = {},
+) {
   return render(
     <RunsList
       runs={[makeRun()]}
       total={1}
-      query=""
-      source=""
-      subject=""
-      evaluation=""
+      filter={parseRunsFilter(filter)}
+      agentName={null}
       needsReviewTotal={0}
       page={1}
       pageSize={25}
@@ -157,7 +159,7 @@ describe("RunsList evaluation filter", () => {
   }
 
   it("links each filter through the evaluation param and resets the page", () => {
-    renderList({ query: "sup", source: "v1", page: 3 });
+    renderList({ page: 3 }, { q: "sup", source: "v1" });
 
     expect(
       filterLinks().map((link) => [
@@ -167,18 +169,16 @@ describe("RunsList evaluation filter", () => {
     ).toEqual([
       ["All", "/runs?q=sup&source=v1"],
       ["Needs review", "/runs?q=sup&source=v1&evaluation=needs_review"],
-      ["Failed", "/runs?q=sup&source=v1&evaluation=failed"],
+      ["Failed a criterion", "/runs?q=sup&source=v1&evaluation=failed"],
       ["Not evaluated", "/runs?q=sup&source=v1&evaluation=not_evaluated"],
     ]);
   });
 
   it("keeps the evaluation filter in the source links and the pagination", () => {
-    renderList({
-      evaluation: "failed",
-      total: 60,
-      page: 2,
-      runs: [makeRun()],
-    });
+    renderList(
+      { total: 60, page: 2, runs: [makeRun()] },
+      { evaluation: "failed" },
+    );
 
     expect(screen.getByRole("button", { name: "Playground" })).toHaveAttribute(
       "href",
@@ -195,7 +195,7 @@ describe("RunsList evaluation filter", () => {
   });
 
   it("marks the active filter", () => {
-    renderList({ evaluation: "needs_review" });
+    renderList({}, { evaluation: "needs_review" });
 
     const active = filterLinks().find((link) =>
       link.textContent?.startsWith("Needs review"),
@@ -220,13 +220,13 @@ describe("RunsList evaluation filter", () => {
   });
 
   it("says nothing is left to review on an empty review queue", () => {
-    renderList({ evaluation: "needs_review", runs: [], total: 0 });
+    renderList({ runs: [], total: 0 }, { evaluation: "needs_review" });
 
     expect(screen.getByText("Nothing to review.")).toBeInTheDocument();
   });
 
   it("keeps the generic empty message for the other filters", () => {
-    renderList({ evaluation: "failed", runs: [], total: 0 });
+    renderList({ runs: [], total: 0 }, { evaluation: "failed" });
 
     expect(screen.getByText("No runs match this filter.")).toBeInTheDocument();
   });
@@ -243,10 +243,38 @@ describe("RunsList subject", () => {
   });
 
   it("shows the active subject filter with a link that clears it", () => {
-    renderList({ subject: "user-42", source: "v1" });
+    renderList({}, { subject: "user-42", source: "v1" });
 
     expect(
       screen.getByRole("button", { name: "Clear subject filter user-42" }),
     ).toHaveAttribute("href", "/runs?source=v1");
+  });
+});
+
+describe("RunsList queue", () => {
+  const AGENT = "0b6f6c0e-3c58-4b56-9d0a-0d8c1f5f2a11";
+
+  it("filters to the runs that need attention, keeping the other filters", () => {
+    renderList({}, { source: "v1" });
+
+    expect(
+      screen.getByRole("button", { name: "Needs attention" }),
+    ).toHaveAttribute("href", "/runs?source=v1&attention=1");
+  });
+
+  it("shows the agent filter by name with a link that clears it", () => {
+    renderList({ agentName: "Support" }, { agent: AGENT, attention: "1" });
+
+    expect(
+      screen.getByRole("button", { name: "Clear agent filter Support" }),
+    ).toHaveAttribute("href", "/runs?attention=1");
+  });
+
+  it("opens a run carrying the queue it was opened from, without the page", () => {
+    renderList({ page: 2, total: 60 }, { agent: AGENT, attention: "1" });
+
+    expect(
+      within(screen.getAllByRole("row")[1]).getAllByRole("link")[0],
+    ).toHaveAttribute("href", `/runs/r1?agent=${AGENT}&attention=1`);
   });
 });

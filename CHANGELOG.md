@@ -4,6 +4,52 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
+### Added
+
+- **Connect tab.** Each agent has a **Connect** tab with a curl call, OpenAI SDK snippets in Python and TypeScript, and an MCP client block, filled in with that agent's ID and this instance's address, ready to copy. See [USAGE.md](docs/USAGE.md#calling-your-agents).
+- **A review queue you can walk.** **Runs** filters by **Needs attention** (runs that failed or carry an open note, the list Home shows) and, from an agent's **Runs** link, by agent; both combine with the existing filters. A run opened from the list has arrows to the newer and the older run in that same filtered list, so you no longer return to the list between runs. Home's list links to that queue. See [USAGE.md](docs/USAGE.md#reviewing-verdicts).
+- **A context size for endpoints that report none.** `CONTEXT_LIMIT_FALLBACK` sets the context size assumed for a model whose size your provider does not report, which is every model on Ollama, LiteLLM or vLLM. Until now those were all treated as 128,000 tokens, so a long conversation on a smaller model was never trimmed and ended in a provider error.
+- The Playground has a **New conversation** button, instead of reloading the page to start a new thread.
+
+### Changed
+
+- **Run time limit.** A run that takes longer than 30 minutes (`RUN_TIMEOUT_SECONDS`) is stopped and recorded as failed, instead of waiting on a provider or a tool that never answers. A stuck scheduled run used to hold its slot indefinitely while every later occurrence was skipped as overlapping; it now fails, counts toward the five failures that pause the schedule, and frees the slot. A sub-agent's work counts toward its caller's limit, and the time spent waiting for a tool approval does not count. In the Playground the conversation says the run exceeded its time limit.
+- **Tool result size.** HTTP tool results are cut at a quarter of the agent's model context, counting four characters per token, instead of at a fixed 256 KB: about 1 MB on a model with a 1,000,000-token context, 128 KB on a 128,000-token one, 8 KB on a local 8,000-token one. The fixed limit wasted most of a large context and overflowed a small one. MCP tool results, which were not cut at all, get the same limit.
+- **`/v1` streaming errors.** A streaming `/v1` call that fails no longer sends the provider's or the tool's error text to the client. It ends with the same generic message a non-streaming call already returned, `The server had an error while processing your request.`; the real error is on the run. A streaming run stopped by the time limit says so.
+- **Agent page tabs.** The agent page is organized in tabs, Playground, Configuration, Evaluation and Connect, each using the full width; the Playground keeps its conversation while you look at another tab. **Runs** and **Metrics** links open that agent's runs and its results by version. The address follows the tab, so a reload or a shared link opens the same one: `?tab=evaluation`, `configuration` or `connect`.
+- **Sidebar groups.** **Build** holds Agents, Schedules and Memory; **Library** holds what agents share — HTTP Tools, Skills, MCP Servers and Knowledge — and can be collapsed, which your browser remembers; **Review** holds Runs and Metrics. Every page is where it was.
+- **Settings page.** What to record, how long runs and transcripts are kept, and the judge model moved from a popover on the Metrics page to **Settings**, at the bottom of the sidebar. The indicator on the Metrics page that shows which sources are recorded now links there.
+- **Clearer names.** Three names that meant two things each were split. The Home list of failed runs and runs with open notes is now **Needs attention**; "to review" is only ever about verdicts the judge was unsure of. The **Runs** filter for runs with a failing verdict is **Failed a criterion**, so "failed" alone always means the run itself failed. The **Tools** section is now **HTTP Tools**, since agents also get tools from MCP servers and sub-agents.
+- The Playground shows **Memory key** only for agents that have a custom-key memory.
+- The model catalog an agent's context size is read from is refreshed every hour, so a model your provider added after the app started no longer needs a restart to get its real context size.
+
+### Fixed
+
+- A tool whose name is longer than 64 characters for the model (a sub-agent with a long ID, a long HTTP tool name, or a long MCP server name plus tool name) no longer makes providers reject the whole call: the name is shortened to 64 characters, ending in a short code that keeps it distinct.
+- An MCP tool that returns a very large result no longer puts all of it in the model's context and the stored transcript: it is cut and marked `[truncated]`, as HTTP tool results already were, and a response from an MCP server larger than 8 MB is refused while it is read.
+- Processing a very large knowledge document no longer holds all of its passages in memory at once (a 20 MB text file could take several hundred MB, enough to stop a small container): passages are stored as they are embedded. A document only becomes searchable once all of them are in, and one that fails for good keeps none.
+- A memory compaction whose model never answers no longer holds a database connection until the process restarts: it gives up after three minutes and is recorded as failed.
+- An MCP server that answers just after the 30-second connection limit no longer leaves its connection open for the life of the process.
+
+### Security
+
+- Next.js is updated from 16.2.9 to 16.4.6, which closes 25 published advisories. Among them: a way around the proxy that carries this app's cross-site request check, remote code execution through the image optimization endpoint (`/_next/image`, which is on even though the app does not use it) and on servers hosted on Windows, and two denial-of-service bugs. Upgrade even if the instance is only reachable through your proxy.
+- A `/v1` request with a very long invalid `messages` array can no longer exhaust the process's memory.
+- No dependency of the running app has a published advisory left.
+
+### Upgrading
+
+- There is no migration in this version, but its dependencies changed: `docker compose up --build` rebuilds the image; without Docker, run `pnpm install` before starting the app.
+- Runs are now stopped after 30 minutes. If your agents legitimately run longer, for example with slow local models, raise `RUN_TIMEOUT_SECONDS` (new, optional, 1800 by default).
+- HTTP tool results are cut at a quarter of the model's context instead of at 256 KB, and MCP tool results, uncut until now, at the same limit. On a model with a 1,000,000-token context a tool that returns a lot now puts about four times more into every later step of the run, and into its cost (more on larger models, up to 8 MB); on a model with less than about 262,000 tokens of context, HTTP tool results are cut earlier than before.
+- An MCP server whose response to one call is larger than 8 MB now fails that call; until now it was read whole.
+- If `PROVIDER_BASE_URL` points at an endpoint that does not report context sizes (Ollama, LiteLLM, vLLM), set the new, optional `CONTEXT_LIMIT_FALLBACK` to your smallest model's context in tokens. Without it every model is assumed to have 128,000, as before, and that is also what the quarter for tool results is taken of.
+- A client of `/v1` that showed or parsed the error text of a failed streaming call now gets the generic message; look the failure up on the **Runs** page.
+- Tools with a name longer than 64 characters appear under their shortened name in runs recorded from now on; on the metrics page their earlier calls stay under the old name.
+- Not new, but now documented: with several replicas, tool approvals asked over MCP need each MCP client pinned to one replica. See [DEPLOYMENT.md](docs/DEPLOYMENT.md#production-deployment).
+
 ## [0.5.0] - 2026-11-25
 
 ### Added
@@ -104,7 +150,8 @@ What changed in each version of agentlathe, written for the people running an in
 
 First public release: agents defined in Postgres and exposed through an in-app Playground, an OpenAI-compatible `/v1` and one MCP endpoint per agent, with HTTP tools, MCP servers, skills, sub-agents and approval gates. Every call becomes a run you can read and annotate with fix drafts, and `/metrics` covers runs, latency, tokens and cost.
 
-[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/contedenis/agentlathe/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/contedenis/agentlathe/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/contedenis/agentlathe/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/contedenis/agentlathe/compare/v0.2.0...v0.3.0

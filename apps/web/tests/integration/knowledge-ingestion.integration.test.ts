@@ -31,6 +31,7 @@ let after: typeof import("next/server").after;
 let collectionId: string;
 let embeddingRequests: { model: string; input: string[] }[];
 let failEmbeddings: boolean;
+let failFromRequest: number;
 let holdEmbeddings: Promise<void> | null;
 
 function vectorOf(text: string): number[] {
@@ -117,7 +118,7 @@ describe("knowledge ingestion (requires Docker)", () => {
         const request = JSON.parse(body) as { model: string; input: string[] };
         embeddingRequests.push(request);
         await holdEmbeddings;
-        if (failEmbeddings) {
+        if (failEmbeddings || embeddingRequests.length >= failFromRequest) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: { message: "quota exceeded" } }));
           return;
@@ -170,6 +171,7 @@ describe("knowledge ingestion (requires Docker)", () => {
     vi.mocked(after).mockClear();
     embeddingRequests = [];
     failEmbeddings = false;
+    failFromRequest = Number.POSITIVE_INFINITY;
     holdEmbeddings = null;
     process.env.EMBEDDING_MODEL = "test/embed";
     await dbModule.db.delete(dbModule.knowledgeCollections);
@@ -327,6 +329,13 @@ describe("knowledge ingestion (requires Docker)", () => {
       attempts: 3,
       claimedAt: minutesAgo(11),
     });
+    await dbModule.db.insert(dbModule.knowledgeChunks).values({
+      documentId: exhausted.id,
+      position: 0,
+      content: "Expense reports",
+      embedding: [0, 0, 0],
+      embeddingModel: "left/behind",
+    });
     const fresh = await uploaded("fresh.md", "Report lost laptops in 4 hours.");
     await setDocument(fresh.id, {
       status: "processing",
@@ -344,6 +353,7 @@ describe("knowledge ingestion (requires Docker)", () => {
       status: "failed",
       error: "Processing stopped before finishing 3 times.",
     });
+    expect(await chunksOf(exhausted.id)).toEqual([]);
     expect((await documentRow(fresh.id)).status).toBe("processing");
   });
 
@@ -370,6 +380,28 @@ describe("knowledge ingestion (requires Docker)", () => {
     });
     const chunks = await chunksOf(document.id);
     expect(chunks.map((chunk) => chunk.embeddingModel)).toEqual(["test/embed"]);
+  });
+
+  it("writes passages batch by batch, and a retry replaces what a failed attempt left", async () => {
+    failFromRequest = 2;
+    const document = await uploaded(
+      "long.md",
+      "Refunds over $500 go to billing. ".repeat(4000),
+    );
+
+    await engine.processKnowledge();
+    expect((await documentRow(document.id)).status).toBe("pending");
+    expect(await chunksOf(document.id)).toHaveLength(100);
+
+    failFromRequest = Number.POSITIVE_INFINITY;
+    await setDocument(document.id, { claimedAt: minutesAgo(3) });
+    await engine.processKnowledge();
+    expect((await documentRow(document.id)).status).toBe("ready");
+    const chunks = await chunksOf(document.id);
+    expect(chunks.length).toBeGreaterThan(100);
+    expect(new Set(chunks.map((chunk) => chunk.position)).size).toBe(
+      chunks.length,
+    );
   });
 
   it("writes nothing for a document deleted while it was being embedded", async () => {
