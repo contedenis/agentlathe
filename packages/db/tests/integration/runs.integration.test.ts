@@ -275,6 +275,44 @@ describe("recordAgentRun / deleteExpiredAgentRuns (requires Docker)", () => {
     expect(ids).toContain(fresh.id);
   });
 
+  it("deletes a backlog larger than one batch in a single sweep", async () => {
+    const { deleteExpiredAgentRuns } = await import("../../src/runs");
+    const agent = await makeAgent("ttl backlog");
+    await db.insert(schema.agentRuns).values(
+      Array.from({ length: 2500 }, () => ({
+        agentId: agent.id,
+        source: "v1" as const,
+        durationMs: 1,
+        createdAt: new Date(Date.now() - 100 * DAY_MS),
+      })),
+    );
+    const [fresh] = await db
+      .insert(schema.agentRuns)
+      .values({ agentId: agent.id, source: "v1", durationMs: 1 })
+      .returning();
+
+    await deleteExpiredAgentRuns(90);
+
+    expect((await runsFor(agent.id)).map((row) => row.id)).toEqual([fresh.id]);
+  });
+
+  it("stops a statement that runs past DB_STATEMENT_TIMEOUT_SECONDS", async () => {
+    const { closePool, getPool } = await import("../../src/client");
+    await closePool();
+    process.env.DB_STATEMENT_TIMEOUT_SECONDS = "1";
+    try {
+      await expect(getPool().query("select pg_sleep(5)")).rejects.toThrow(
+        "statement timeout",
+      );
+      await expect(getPool().query("select 1 as ok")).resolves.toMatchObject({
+        rows: [{ ok: 1 }],
+      });
+    } finally {
+      delete process.env.DB_STATEMENT_TIMEOUT_SECONDS;
+      await closePool();
+    }
+  });
+
   it("deletes transcripts older than the ttl and keeps recent ones", async () => {
     const { deleteExpiredTranscripts } = await import("../../src/runs");
     const agent = await makeAgent("ttl transcripts");

@@ -4,6 +4,22 @@ What changed in each version of agentlathe, written for the people running an in
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-27
+
+### Changed
+
+- A database statement that runs longer than 60 seconds is stopped and fails, instead of holding a connection for as long as it takes. `DB_STATEMENT_TIMEOUT_SECONDS` changes the limit.
+- Expired runs and transcripts are deleted a thousand at a time. An instance with a large backlog, after lowering a retention setting for example, no longer cleans it up in one long statement that blocks other writes.
+
+### Fixed
+
+- A run started with **Run now** is part of the shutdown: on `SIGTERM` the app waits for it like for a scheduled run, and marks it interrupted if it has to cut it. Before, it was cut at once and stayed "running" until a scheduler noticed three minutes later, or indefinitely with the scheduler off.
+
+### Upgrading
+
+- No migration. If your `DATABASE_URL` goes through PgBouncer or another pooler that rejects the `statement_timeout` startup parameter, the app cannot connect after this upgrade: set `DB_STATEMENT_TIMEOUT_SECONDS=0`, which leaves the limit to the server, or allow the parameter in the pooler (`ignore_startup_parameters` in PgBouncer).
+- If you run statements against a very large instance that legitimately take more than a minute, such as knowledge search without pgvector over hundreds of thousands of passages, raise `DB_STATEMENT_TIMEOUT_SECONDS`.
+
 ## [0.7.0] - 2026-11-27
 
 ### Added
@@ -172,7 +188,8 @@ What changed in each version of agentlathe, written for the people running an in
 
 First public release: agents defined in Postgres and exposed through an in-app Playground, an OpenAI-compatible `/v1` and one MCP endpoint per agent, with HTTP tools, MCP servers, skills, sub-agents and approval gates. Every call becomes a run you can read and annotate with fix drafts, and `/metrics` covers runs, latency, tokens and cost.
 
-[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/contedenis/agentlathe/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/contedenis/agentlathe/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/contedenis/agentlathe/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/contedenis/agentlathe/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/contedenis/agentlathe/compare/v0.4.0...v0.5.0

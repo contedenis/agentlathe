@@ -43,6 +43,49 @@ type Claim = {
 
 export type Execution = { occurrenceId: string; done: Promise<void> };
 
+type RunRegistry = {
+  abort: AbortController;
+  inFlight: Map<string, Promise<void>>;
+};
+
+// On globalThis: the instrumentation hook and the route handlers are separate bundles, each with its own copy of this module.
+function runRegistry(): RunRegistry {
+  const state = globalThis as { __agentlatheRuns?: RunRegistry };
+  state.__agentlatheRuns ??= {
+    abort: new AbortController(),
+    inFlight: new Map(),
+  };
+  return state.__agentlatheRuns;
+}
+
+function start(claim: Claim): Execution {
+  const { abort, inFlight } = runRegistry();
+  const done = dispatch(claim, abort.signal);
+  inFlight.set(claim.occurrenceId, done);
+  void done.finally(() => inFlight.delete(claim.occurrenceId));
+  return { occurrenceId: claim.occurrenceId, done };
+}
+
+function settledWithin(promises: Promise<unknown>[], ms: number) {
+  return Promise.race([
+    Promise.allSettled(promises).then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+  ]);
+}
+
+export async function stopRuns(
+  drainMs: number,
+  abortSettleMs: number,
+): Promise<void> {
+  const { abort, inFlight } = runRegistry();
+  if (await settledWithin([...inFlight.values()], drainMs)) return;
+  abort.abort();
+  await settledWithin([...inFlight.values()], abortSettleMs);
+  await markInterrupted([...inFlight.keys()]).catch((err) =>
+    console.error("marking interrupted runs failed", err),
+  );
+}
+
 type Outcome = {
   status: Extract<
     ScheduleOccurrenceStatus,
@@ -55,13 +98,10 @@ type Outcome = {
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
-export async function tick(signal: AbortSignal): Promise<Execution[]> {
+export async function tick(): Promise<Execution[]> {
   await Promise.all([recordSchedulerHeartbeat(), reapStaleOccurrences()]);
   const claims = await claimDue();
-  return claims.map((claim) => ({
-    occurrenceId: claim.occurrenceId,
-    done: dispatch(claim, signal),
-  }));
+  return claims.map(start);
 }
 
 async function recordSchedulerHeartbeat(): Promise<void> {
@@ -216,11 +256,7 @@ export async function runNow(scheduleId: string): Promise<RunNowResult> {
     };
   });
   if (decision.status !== "started") return decision;
-  return {
-    status: "started",
-    occurrenceId: decision.claim.occurrenceId,
-    done: dispatch(decision.claim, new AbortController().signal),
-  };
+  return { status: "started", ...start(decision.claim) };
 }
 
 async function claimDue(): Promise<Claim[]> {
@@ -430,7 +466,7 @@ async function finish(claim: Claim, outcome: Outcome): Promise<void> {
   ]);
 }
 
-export async function markInterrupted(occurrenceIds: string[]): Promise<void> {
+async function markInterrupted(occurrenceIds: string[]): Promise<void> {
   if (occurrenceIds.length === 0) return;
   await db
     .update(scheduleOccurrences)

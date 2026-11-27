@@ -96,8 +96,8 @@ async function makeSchedule(
   return schedule;
 }
 
-async function runTick(signal = new AbortController().signal) {
-  const executions = await engine.tick(signal);
+async function runTick() {
+  const executions = await engine.tick();
   await Promise.all(executions.map((execution) => execution.done));
   return executions;
 }
@@ -169,6 +169,7 @@ describe("scheduler tick against Postgres and a scripted provider (requires Dock
     await dbModule.db.delete(dbModule.mcpServers);
     providerCalls = [];
     handleCompletion = completion("Digest ready.");
+    (globalThis as { __agentlatheRuns?: unknown }).__agentlatheRuns = undefined;
   });
 
   it("runs a due schedule once: a scheduled run with its transcript, and the next occurrence ahead", async () => {
@@ -375,15 +376,41 @@ describe("scheduler tick against Postgres and a scripted provider (requires Dock
     handleCompletion = completion("too late", 5000);
     const agent = await makeAgent("aborted agent");
     const schedule = await makeSchedule(agent.id, { consecutiveFailures: 1 });
-    const abort = new AbortController();
 
-    const executions = await engine.tick(abort.signal);
+    const executions = await engine.tick();
     await vi.waitFor(() => expect(providerCalls).toHaveLength(1));
-    abort.abort();
+    await engine.stopRuns(0, 5000);
     await Promise.all(executions.map((execution) => execution.done));
 
     const [occurrence] = await occurrencesOf(schedule.id);
     expect(occurrence.status).toBe("interrupted");
     expect((await reload(schedule.id)).consecutiveFailures).toBe(1);
+  });
+
+  it("a shutdown waits for a Run now that finishes in time", async () => {
+    handleCompletion = completion("just in time", 300);
+    const agent = await makeAgent("drained agent");
+    const schedule = await makeSchedule(agent.id, { isActive: false });
+
+    const started = await engine.runNow(schedule.id);
+    await engine.stopRuns(10000, 0);
+
+    expect(started.status).toBe("started");
+    const [occurrence] = await occurrencesOf(schedule.id);
+    expect(occurrence.status).toBe("succeeded");
+  });
+
+  it("a shutdown aborts a Run now that outlasts the drain and marks it interrupted", async () => {
+    handleCompletion = completion("too late", 5000);
+    const agent = await makeAgent("manual agent");
+    const schedule = await makeSchedule(agent.id, { isActive: false });
+
+    const started = await engine.runNow(schedule.id);
+    await vi.waitFor(() => expect(providerCalls).toHaveLength(1));
+    await engine.stopRuns(0, 5000);
+
+    expect(started.status).toBe("started");
+    const [occurrence] = await occurrencesOf(schedule.id);
+    expect(occurrence.status).toBe("interrupted");
   });
 });

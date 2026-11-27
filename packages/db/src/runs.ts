@@ -1,4 +1,4 @@
-import { eq, lt, sql } from "drizzle-orm";
+import { eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   DEFAULT_AGENT_RUN_TTL_DAYS,
@@ -186,16 +186,55 @@ export async function saveRunTranscript(
   }
 }
 
+const RETENTION_BATCH = 1000;
+
+// One statement over a large backlog holds its locks for minutes and can outlive the statement timeout.
+async function deleteInBatches(deleteBatch: () => Promise<number>) {
+  while ((await deleteBatch()) === RETENTION_BATCH);
+}
+
 export async function deleteExpiredTranscripts(ttlDays: number): Promise<void> {
   if (ttlDays <= 0) return;
   const cutoff = new Date(Date.now() - ttlDays * 24 * 60 * 60 * 1000);
-  await db.delete(runTranscripts).where(lt(runTranscripts.createdAt, cutoff));
+  await deleteInBatches(async () => {
+    const deleted = await db
+      .delete(runTranscripts)
+      .where(
+        inArray(
+          runTranscripts.runId,
+          db
+            .select({ id: runTranscripts.runId })
+            .from(runTranscripts)
+            .where(lt(runTranscripts.createdAt, cutoff))
+            .limit(RETENTION_BATCH)
+            .for("update", { skipLocked: true }),
+        ),
+      )
+      .returning({ id: runTranscripts.runId });
+    return deleted.length;
+  });
 }
 
 export async function deleteExpiredAgentRuns(ttlDays: number): Promise<void> {
   if (ttlDays <= 0) return;
   const cutoff = new Date(Date.now() - ttlDays * 24 * 60 * 60 * 1000);
-  await db.delete(agentRuns).where(lt(agentRuns.createdAt, cutoff));
+  await deleteInBatches(async () => {
+    const deleted = await db
+      .delete(agentRuns)
+      .where(
+        inArray(
+          agentRuns.id,
+          db
+            .select({ id: agentRuns.id })
+            .from(agentRuns)
+            .where(lt(agentRuns.createdAt, cutoff))
+            .limit(RETENTION_BATCH)
+            .for("update", { skipLocked: true }),
+        ),
+      )
+      .returning({ id: agentRuns.id });
+    return deleted.length;
+  });
 }
 
 export async function appendRunWarnings(

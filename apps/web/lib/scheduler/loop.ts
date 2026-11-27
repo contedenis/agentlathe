@@ -1,7 +1,7 @@
 import { closePool, getSettings } from "@agentlathe/db";
 import { processKnowledge, stopKnowledgeProcessing } from "../knowledge/engine";
 import { runRetentionSweep } from "../retention";
-import { type Execution, markInterrupted, tick } from "./engine";
+import { stopRuns, tick } from "./engine";
 
 const TICK_MS = 30 * 1000;
 const TICKS_PER_RETENTION_SWEEP = 20;
@@ -12,24 +12,10 @@ function schedulerEnabled(value = process.env.SCHEDULER_ENABLED) {
   return !["false", "0"].includes((value ?? "").trim().toLowerCase());
 }
 
-function settledWithin(promises: Promise<unknown>[], ms: number) {
-  return Promise.race([
-    Promise.allSettled(promises).then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
-  ]);
-}
-
 function runLoop() {
-  const abort = new AbortController();
-  const inFlight = new Map<string, Promise<void>>();
   let ticks = 0;
   let stopping = false;
   let current: Promise<void> | null = null;
-
-  const track = (execution: Execution) => {
-    inFlight.set(execution.occurrenceId, execution.done);
-    void execution.done.finally(() => inFlight.delete(execution.occurrenceId));
-  };
 
   const runTick = async () => {
     void processKnowledge().catch((err) =>
@@ -37,11 +23,10 @@ function runLoop() {
     );
     try {
       const sweep = ticks++ % TICKS_PER_RETENTION_SWEEP === 0;
-      const [executions] = await Promise.all([
-        tick(abort.signal),
+      await Promise.all([
+        tick(),
         sweep ? getSettings().then(runRetentionSweep) : undefined,
       ]);
-      for (const execution of executions) track(execution);
     } catch (err) {
       console.error("scheduler tick failed", err);
     }
@@ -67,12 +52,6 @@ function runLoop() {
           console.error("stopping knowledge processing failed", err),
         ),
       ]);
-      if (await settledWithin([...inFlight.values()], DRAIN_MS)) return;
-      abort.abort();
-      await settledWithin([...inFlight.values()], ABORT_SETTLE_MS);
-      await markInterrupted([...inFlight.keys()]).catch((err) =>
-        console.error("marking interrupted runs failed", err),
-      );
     },
   };
 }
@@ -90,6 +69,7 @@ export function startScheduler(): void {
     exiting = true;
     try {
       await loop?.stop();
+      await stopRuns(DRAIN_MS, ABORT_SETTLE_MS);
       await closePool();
     } finally {
       process.exit(0);
